@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.Reader;
 import java.util.*;
 import java.io.*;
+import java.util.concurrent.*;
 // Ah, heck:
 import java.security.KeyFactory;
 
@@ -57,6 +58,26 @@ public class Blockchain {
     private static final int iTREAT = 5;
     private static final int iRX = 6;
 
+    public static Comparator<BlockRecord> BlockTSComparator = new Comparator<BlockRecord>() {
+        @Override
+        public int compare(BlockRecord b1, BlockRecord b2) {
+            String s1 = b1.getTimeStamp();
+            String s2 = b2.getTimeStamp();
+            if (s1 == s2) {
+                return 0;
+            }
+            if (s1 == null) {
+                return -1;
+            }
+            if (s2 == null) {
+                return 1;
+            }
+            return s1.compareTo(s2);
+        }
+    };
+
+    final PriorityBlockingQueue<BlockRecord> unverifiedBlockQueue = new PriorityBlockingQueue<>(100, BlockTSComparator);
+
     public Blockchain(String args[]) {
         System.out.println("In the constructor...");
     }
@@ -73,10 +94,48 @@ public class Blockchain {
 
     public void run(String args[]) throws Exception {
         basicSetup(args);
+        // registers other processes information
         apiKeysSetup();
-        readInput();
+
+        // start unverified block listener
+        new Thread(new UnverifiedBlockServer(unverifiedBlockQueue)).start();
+
+        // read input, create unverified blocks
+        LinkedList<BlockRecord> unverifiedBlocks = getUnverifiedBlocks();
+
+        // send the read unverified blocks to processes
+        // read into priority queue
+        sendUnverifiedBlocks(unverifiedBlocks);
+
     }
 
+    // sends unverified blocks in this process to other processes
+    // multicast unverified blocks into process queues
+    public void sendUnverifiedBlocks(LinkedList<BlockRecord> unverifiedBlocks) {
+        Socket UVBsock;
+        Random r = new Random();
+        try {
+            Iterator<BlockRecord> iterator = unverifiedBlocks.iterator();
+
+            ObjectOutputStream toServerOOS = null;
+            for (int i = 0; i < numberProcesses; i++) {
+                iterator = unverifiedBlocks.iterator();
+                while (iterator.hasNext()) {
+                    UVBsock = new Socket(serverName, Ports.UnverifiedBlockServerPortBase + (i * 1000));
+                    toServerOOS = new ObjectOutputStream(UVBsock.getOutputStream());
+                    Thread.sleep((r.nextInt(9) * 100));
+                    BlockRecord currentBlock = iterator.next();
+                    toServerOOS.writeObject(currentBlock);
+                    toServerOOS.flush();
+                    UVBsock.close();
+                }
+            }
+        } catch (Exception x) {
+            x.printStackTrace();
+        }
+    }
+
+    // reads in pnum, initializes ports, generates keys
     public void basicSetup(String[] args) throws Exception {
         // set up process number
         pnum = readPNum(args);
@@ -167,7 +226,7 @@ public class Blockchain {
     }
 
     // returns a linked list of blockrecords read from file
-    public LinkedList<BlockRecord> readInput() {
+    public LinkedList<BlockRecord> getUnverifiedBlocks() {
         String fileName = getFileName();
         System.out.println("Using input file: " + fileName);
         LinkedList<BlockRecord> recordList = new LinkedList<BlockRecord>();
@@ -332,7 +391,7 @@ class Ports {
 }
 
 // class that represents the block record
-class BlockRecord {
+class BlockRecord implements Serializable {
     /* Examples of block fields. You should pick, and justify, your own set: */
     String BlockID;
     String TimeStamp;
@@ -462,4 +521,57 @@ class BlockRecord {
         this.WinningHash = WH;
     }
 
+}
+
+class UnverifiedBlockServer implements Runnable {
+    BlockingQueue<BlockRecord> queue;
+
+    UnverifiedBlockServer(BlockingQueue<BlockRecord> queue) {
+        this.queue = queue; // Constructor binds our prioirty queue to the local variable.
+    }
+
+    /*
+     * Inner class to share priority queue. We are going to place the unverified
+     * blocks (UVBs) into this queue in the order we get them, but they will be
+     * retrieved by a consumer process sorted by TimeStamp of when created.
+     */
+
+    class UnverifiedBlockWorker extends Thread { // Receive a UVB and put it into the shared priority queue.
+        Socket sock; // Class member, socket, local to Worker.
+
+        UnverifiedBlockWorker(Socket s) {
+            sock = s;
+        } // Constructor, assign arg s to local sock
+
+        public void run() {
+            try {
+                ObjectInputStream unverifiedIn = new ObjectInputStream(sock.getInputStream());
+                BlockRecord BR = (BlockRecord) unverifiedIn.readObject(); // Read in the UVB as an object
+                System.out.println(
+                        "Read in block id: " + BR.getBlockID() + " from process: " + BR.getVerificationProcessID());
+                queue.put(BR); // Note: make sure you have a large enough blocking priority queue to accept all
+                               // the puts
+                sock.close();
+            } catch (Exception x) {
+                x.printStackTrace();
+            }
+        }
+    }
+
+    public void run() { // Start up the Unverified Block Receiving Server
+        int q_len = 6; /* Number of requests for OpSys to queue */
+        Socket sock;
+        System.out.println("Starting the Unverified Block Server input thread using "
+                + Integer.toString(Ports.UnverifiedBlockServerPort));
+        try {
+            ServerSocket UVBServer = new ServerSocket(Ports.UnverifiedBlockServerPort, q_len);
+            while (true) {
+                sock = UVBServer.accept(); // Got a new unverified block
+                // System.out.println("Got connection to UVB Server.");
+                new UnverifiedBlockWorker(sock).start(); // So start a thread to process it.
+            }
+        } catch (IOException ioe) {
+            System.out.println(ioe);
+        }
+    }
 }
