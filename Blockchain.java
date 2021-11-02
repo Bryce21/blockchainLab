@@ -1,8 +1,4 @@
 import java.net.*;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.Reader;
 import java.util.*;
 import java.io.*;
 import java.util.concurrent.*;
@@ -196,7 +192,12 @@ public class Blockchain {
         if (parentProcess == null) {
             return false;
         }
-        signer.initVerify(parentProcess.publicKey);
+        // rebuild the public key from its bytes
+        X509EncodedKeySpec pubSpec = new X509EncodedKeySpec(parentProcess.publicKey);
+        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+        PublicKey RestoredKey = keyFactory.generatePublic(pubSpec);
+
+        signer.initVerify(RestoredKey);
         signer.update(ub.BlockID.getBytes());
 
         return signer.verify(ub.SignedBlockID);
@@ -324,15 +325,20 @@ public class Blockchain {
     public void KeySend() { // Multicast our public key to the other processes
         System.out.println("Key send started from pnum:" + pnum);
         Socket sock;
-        ObjectOutputStream toServer;
+        PrintStream toServer;
         sentKey = true;
         try {
             for (int i = 0; i < numberProcesses; i++) {// Send our public key to all servers.
                 sock = new Socket(serverName, Ports.KeyServerPortBase + (i * 1000));
-                toServer = new ObjectOutputStream(sock.getOutputStream());
+                toServer = new PrintStream(sock.getOutputStream());
+
+                Process thisProcess = new Process(pnum, keyPair.getPublic().getEncoded(), Ports.KeyServerPortBase,
+                        serverName);
+
+                String thisProcessJsonString = new Gson().toJson(thisProcess);
 
                 // Send the process object representing this blockchain process
-                toServer.writeObject(new Process(pnum, keyPair.getPublic(), Ports.KeyServerPortBase, serverName));
+                toServer.println(thisProcessJsonString);
                 toServer.flush();
                 sock.close();
             }
@@ -443,11 +449,17 @@ class PublicKeyWorker extends Thread {
 
     public void run() {
         try {
-            ObjectInputStream unverifiedIn = new ObjectInputStream(keySock.getInputStream());
-            Process otherProcess = (Process) unverifiedIn.readObject();
+            BufferedReader processIn = new BufferedReader(new InputStreamReader(keySock.getInputStream()));
+            // Json string representation of Process class
+            String stringProcess = processIn.readLine();
+            // convert the string json to Process class object
+            Process otherProcess = new Gson().fromJson(stringProcess, Process.class);
+
             containerBlockchainProcess.addProcess(otherProcess);
             keySock.close();
             if (!containerBlockchainProcess.sentKey) {
+                // if the blockchain process has not sent its key send keys
+                // ie if 0 or 1 process it needs to send its key to every process
                 containerBlockchainProcess.KeySend();
             }
         } catch (Exception x) {
@@ -486,11 +498,11 @@ class PublicKeyServer implements Runnable {
 // Class that represents what info gets stored about a blockchain process
 class Process implements Serializable {
     int pnum;
-    PublicKey publicKey;
+    byte[] publicKey;
     int port;
     String IPAddress;
 
-    Process(int pnumParam, PublicKey publicKeyParam, int portParam, String ipAdressParam) {
+    Process(int pnumParam, byte[] publicKeyParam, int portParam, String ipAdressParam) {
         this.pnum = pnumParam;
         this.publicKey = publicKeyParam;
         this.port = portParam;
@@ -499,7 +511,7 @@ class Process implements Serializable {
 
     public void printInfo() {
         System.out.println("pnum: " + pnum);
-        System.out.println("Public key: " + publicKey);
+        // System.out.println("Public key: " + publicKey);
         System.out.println("port: " + port);
         System.out.println("ipAddress: " + IPAddress);
     }
