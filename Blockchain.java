@@ -32,8 +32,8 @@ import java.util.UUID;
 
 import javax.crypto.Cipher;
 
-// import com.google.gson.Gson;
-// import com.google.gson.GsonBuilder;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 
 public class Blockchain {
 
@@ -48,6 +48,8 @@ public class Blockchain {
 
     // ArrayList to track known other processes and their public keys
     ArrayList<Process> knownProcesses = new ArrayList<Process>();
+
+    LinkedList<BlockRecord> blockchain = new LinkedList<BlockRecord>();
 
     /* Token indexes for input: */
     private static final int iFNAME = 0;
@@ -79,7 +81,6 @@ public class Blockchain {
     final PriorityBlockingQueue<BlockRecord> unverifiedBlockQueue = new PriorityBlockingQueue<>(100, BlockTSComparator);
 
     public Blockchain(String args[]) {
-        System.out.println("In the constructor...");
     }
 
     public static void main(String args[]) {
@@ -96,17 +97,128 @@ public class Blockchain {
         basicSetup(args);
         // registers other processes information
         apiKeysSetup();
+        System.out.println("Known processes size: " + knownProcesses.size());
 
         // start unverified block listener
         new Thread(new UnverifiedBlockServer(unverifiedBlockQueue)).start();
+        new Thread(new BlockchainServer(this)).start();
 
         // read input, create unverified blocks
+        // realistically should not be blocking and should have it's own thread
         LinkedList<BlockRecord> unverifiedBlocks = getUnverifiedBlocks();
+        System.out.println("Size of read blocks from file: " + unverifiedBlocks.size());
 
         // send the read unverified blocks to processes
         // read into priority queue
         sendUnverifiedBlocks(unverifiedBlocks);
+        Thread.sleep(6000);
 
+        // thread to start verifying blocks
+        new Thread(new VerifyBlockWorker(this)).start();
+        while (!unverifiedBlockQueue.isEmpty()) {
+            System.out.println("Waiting for unverified block queue to empty... Size: " + unverifiedBlockQueue.size());
+            Thread.sleep(3000);
+        }
+        System.out.println("Blockchain size after verification: " + blockchain.size());
+        System.out.println("Unverified blocks queue after verification: " + unverifiedBlockQueue.size());
+        // Add sleep to pretty much guarantee printing happens when done
+        Thread.sleep(6000);
+        // this prints blockchain to console
+        printBlockchain();
+
+    }
+
+    public void WriteBlockChainToFile() {
+        if (pnum == 0) {
+            String filename = "p_0_blockchain.json";
+            Gson gson = new GsonBuilder().setPrettyPrinting().create();
+
+            // Convert the Java object to a JSON String:
+            String json = gson.toJson(blockchain);
+
+            System.out.println("\nJSON String blockRecord is: " + json);
+
+            // Write the JSON object to a file:
+            try (FileWriter writer = new FileWriter(filename)) {
+                gson.toJson(blockchain, writer);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public void printUnverifiedBlocksQueue() {
+        System.out.println("Printing unverified block queue with size: " + unverifiedBlockQueue.size());
+        Iterator queueIterator = unverifiedBlockQueue.iterator();
+        while (queueIterator.hasNext()) {
+            BlockRecord current = (BlockRecord) queueIterator.next();
+            current.print();
+        }
+    }
+
+    // return true if already in blockchain
+    public boolean blockIsAlreadyInBlockchain(String blockId) {
+        for (int i = 0; i < blockchain.size(); i++) {
+            BlockRecord currentBlock = blockchain.get(i);
+            if (currentBlock.BlockID.equals(blockId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void printBlockchain() {
+        System.out.println("Printing block chain of size: " + blockchain.size() + " blockIds: ");
+        System.out.println("blockInt,previousHash,winningHash,verifyingProcess,submittingProcess");
+        for (int i = 0; i < blockchain.size(); i++) {
+            BlockRecord currentBlock = blockchain.get(i);
+            if (i == 0) {
+                System.out.println(currentBlock.getBlockInteger() + "," + currentBlock.getPreviousHash() + ","
+                        + currentBlock.getWinningHash() + "," + currentBlock.VerificationProcessID + ","
+                        + currentBlock.SubmittingProcessID);
+            } else {
+                System.out.println(currentBlock.getBlockInteger() + "," + currentBlock.getPreviousHash().substring(0, 5)
+                        + "," + currentBlock.getWinningHash().substring(0, 5) + "," + currentBlock.VerificationProcessID
+                        + "," + currentBlock.SubmittingProcessID);
+            }
+
+        }
+    }
+
+    // returns true if signature is valid
+    // returns false if signature is invalid
+    // check that signed blockID is equal to blockID
+    public boolean verifyUnverifiedBlockSignature(BlockRecord ub) throws NoSuchAlgorithmException, Exception {
+        Signature signer = Signature.getInstance("SHA1withRSA");
+
+        // get the process that submitted this block
+        Process parentProcess = findProcessByProcessId(ub.SubmittingProcessID);
+        if (parentProcess == null) {
+            return false;
+        }
+        signer.initVerify(parentProcess.publicKey);
+        signer.update(ub.BlockID.getBytes());
+
+        return signer.verify(ub.SignedBlockID);
+    }
+
+    public Process findProcessByProcessId(int parentProcessPnum) {
+        for (int i = 0; i < knownProcesses.size(); i++) {
+            Process currentProcess = knownProcesses.get(i);
+            if (currentProcess.pnum == parentProcessPnum) {
+                return currentProcess;
+            }
+        }
+        System.out.println("Could not find knownProcess with pnum:" + parentProcessPnum);
+        return null;
+    }
+
+    public boolean verifySig(byte[] data, PublicKey key, byte[] sig) throws Exception {
+        Signature signer = Signature.getInstance("SHA1withRSA");
+        signer.initVerify(key);
+        signer.update(data);
+
+        return (signer.verify(sig));
     }
 
     // sends unverified blocks in this process to other processes
@@ -135,37 +247,65 @@ public class Blockchain {
         }
     }
 
-    // reads in pnum, initializes ports, generates keys
+    // reads in pnum, initializes ports, generates keys, initialize blockchain with
+    // genesesis block
     public void basicSetup(String[] args) throws Exception {
         // set up process number
         pnum = readPNum(args);
-        System.out.println("Process number is: " + pnum);
 
         // initialize ports
         new Ports().setPorts(pnum);
 
         // get key information
         keyPair = generateKeyPair(new Random().nextLong());
-        System.out.println("Process: " + pnum + ", public key:" + keyPair.getPublic());
+        // System.out.println("Process: " + pnum + ", public key:" +
+        // keyPair.getPublic());
+
+        // genesis block has to always be the same for each process
+        // so can't add in a lot of information
+        BlockRecord genesisBlock = new BlockRecord();
+        genesisBlock.setBlockID("genesisBlock");
+        genesisBlock.setWinningHash("000000000");
+        genesisBlock.setBlockInteger(0);
+        blockchain.add(genesisBlock);
     }
 
     public void apiKeysSetup() throws Exception {
         // startup key listener
-        System.out.println("Process: " + pnum + ", starting api key listener");
+        // System.out.println("Process: " + pnum + ", starting api key listener");
         new Thread(new PublicKeyServer(this)).start();
 
         if (pnum == 2) {
             KeySend();
         }
-        System.out.println("Past key send");
-        while (knownProcesses.size() == 0) {
-            System.out.println("Waiting to contact other processes. Started by process with pnum 2 starting up...");
+        while (knownProcesses.size() < numberProcesses) {
+            System.out.println(
+                    "Waiting to contact other processes. Started by process with pnum 2 starting up... Known processes: "
+                            + knownProcesses.size());
             Thread.sleep(3000);
         }
         System.out.println("Recieved other processes information");
-        // knownProcesses.get(0).printInfo();
-        // knownProcesses.get(1).printInfo();
-        // knownProcesses.get(2).printInfo();
+    }
+
+    public void sendVerifiedBlocks(BlockRecord verifiedBlock) {
+        try {
+
+            if (!blockIsAlreadyInBlockchain(verifiedBlock.BlockID)) {
+                System.out.println("Sent verified blockID: " + verifiedBlock.BlockID + " from process: " + pnum);
+                for (int i = 0; i < numberProcesses; i++) {
+                    Socket BlockChainSock = new Socket(serverName, Ports.BlockchainServerPortBase + (i * 1000));
+                    ObjectOutputStream toServer = new ObjectOutputStream(BlockChainSock.getOutputStream());
+                    toServer.writeObject(verifiedBlock);
+                    toServer.flush();
+                    BlockChainSock.close();
+                }
+            }
+
+        } catch (Exception e) {
+            System.out.println("Exception sending verified block to other processes");
+            e.printStackTrace();
+        }
+
     }
 
     public void addProcess(Process process) {
@@ -255,7 +395,7 @@ public class Blockchain {
                 // String T1 = String.format("%1$s %2$tF.%2$tT", "Timestamp:", date);
                 String T1 = String.format("%1$s %2$tF.%2$tT", "", date);
                 String TimeStampString = T1 + "." + pnum; // No timestamp collisions!
-                System.out.println("Timestamp: " + TimeStampString);
+                // System.out.println("Timestamp: " + TimeStampString);
                 BR.setTimeStamp(TimeStampString); // Will be able to priority sort by TimeStamp
 
                 /*
@@ -273,23 +413,15 @@ public class Blockchain {
                 BR.setDiag(tokens[iDIAG]);
                 BR.setTreat(tokens[iTREAT]);
                 BR.setRx(tokens[iRX]);
+                BR.signBlockId(keyPair.getPrivate());
 
                 // which process made this block
-                BR.setVerificationProcessID(Integer.toString(pnum));
+                BR.setSubmittingProcessID(pnum);
 
                 recordList.add(BR);
                 n++;
             }
             System.out.println(n + " records read." + "\n");
-            System.out.println("Records in the linked list:");
-
-            // Show names from records read into the linked list:
-            Iterator<BlockRecord> iterator = recordList.iterator();
-            while (iterator.hasNext()) {
-                tempRec = iterator.next();
-                System.out.println(tempRec.getTimeStamp() + " " + tempRec.getFname() + " " + tempRec.getLname());
-            }
-            System.out.println("");
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -338,7 +470,6 @@ class PublicKeyServer implements Runnable {
     public void run() {
         int q_len = 6;
         Socket keySock;
-        System.out.println("Starting Key Server input thread using " + Integer.toString(Ports.KeyServerPort));
         try {
             ServerSocket servsock = new ServerSocket(Ports.KeyServerPort, q_len);
             while (true) {
@@ -394,8 +525,10 @@ class Ports {
 class BlockRecord implements Serializable {
     /* Examples of block fields. You should pick, and justify, your own set: */
     String BlockID;
+    byte[] SignedBlockID;
     String TimeStamp;
-    String VerificationProcessID;
+    int SubmittingProcessID;
+    int VerificationProcessID;
     String PreviousHash; // We'll copy from previous block
     UUID uuid; // Just to show how JSON marshals this binary data.
     String Fname;
@@ -407,6 +540,7 @@ class BlockRecord implements Serializable {
     String Diag;
     String Treat;
     String Rx;
+    int blockInteger;
 
     /* Examples of accessors for the BlockRecord fields: */
     public String getBlockID() {
@@ -425,12 +559,20 @@ class BlockRecord implements Serializable {
         this.TimeStamp = TS;
     }
 
-    public String getVerificationProcessID() {
-        return VerificationProcessID;
+    public int getSubmittingProcessID() {
+        return SubmittingProcessID;
     }
 
-    public void setVerificationProcessID(String VID) {
-        this.VerificationProcessID = VID;
+    public void setSubmittingProcessID(int VID) {
+        this.SubmittingProcessID = VID;
+    }
+
+    public void setVerificationProcessID(int VerificationProcessID) {
+        this.VerificationProcessID = VerificationProcessID;
+    }
+
+    public int getVerificationProcessID() {
+        return VerificationProcessID;
     }
 
     public String getPreviousHash() {
@@ -443,7 +585,7 @@ class BlockRecord implements Serializable {
 
     public UUID getUUID() {
         return uuid;
-    } // Later will show how JSON marshals as a string. Compare to BlockID.
+    }
 
     public void setUUID(UUID ud) {
         this.uuid = ud;
@@ -521,13 +663,99 @@ class BlockRecord implements Serializable {
         this.WinningHash = WH;
     }
 
+    public void signBlockId(PrivateKey key) throws Exception {
+        Signature signer = Signature.getInstance("SHA1withRSA");
+        signer.initSign(key);
+        signer.update(getBlockID().getBytes());
+        this.SignedBlockID = signer.sign();
+    }
+
+    public void print() {
+        System.out.println("Printing information for Blockrecord: ");
+        System.out.println("BlockId: " + BlockID);
+        System.out.println("SubmittingProcessID: " + SubmittingProcessID);
+        System.out.println("VerificationProcessID: " + VerificationProcessID);
+        System.out.println("Timestmap: " + TimeStamp);
+        System.out.println();
+    }
+
+    public int getBlockInteger() {
+        return blockInteger;
+    }
+
+    public void setBlockInteger(int blockInteger) {
+        this.blockInteger = blockInteger;
+    }
+
+    // return a string representing the block data
+    // will be hashed together with random seed as a guess
+    /*
+     * String Fname; String Lname; String SSNum; String DOB; String RandomSeed; //
+     * Our guess. Ultimately our winning guess. String WinningHash; String Diag;
+     * String Treat; String Rx;
+     */
+    public String getDataForValidation() {
+        // todo add the rest of the block data once sure this approach works
+        return BlockID + SubmittingProcessID + Fname + Lname + SSNum;
+    }
+
+}
+
+class BlockchainWorker extends Thread {
+    Socket sock;
+    Blockchain blockchainProcess;
+
+    BlockchainWorker(Socket s, Blockchain blockChainProcess) {
+        sock = s;
+        this.blockchainProcess = blockChainProcess;
+    }
+
+    public void run() {
+        try {
+            ObjectInputStream verifiedBlock = new ObjectInputStream(sock.getInputStream());
+            BlockRecord BR = (BlockRecord) verifiedBlock.readObject();
+
+            // check that block chain doesn't already contain block
+            if (!blockchainProcess.blockIsAlreadyInBlockchain(BR.BlockID)) {
+                System.out.println("Adding BlockId to blockchain: " + BR.BlockID);
+                blockchainProcess.blockchain.add(BR);
+                blockchainProcess.WriteBlockChainToFile();
+            }
+
+            sock.close();
+        } catch (Exception x) {
+            x.printStackTrace();
+        }
+    }
+}
+
+class BlockchainServer implements Runnable {
+    Blockchain blockChainProcess;
+
+    BlockchainServer(Blockchain blockChainProcess) {
+        this.blockChainProcess = blockChainProcess;
+    }
+
+    public void run() {
+        int q_len = 6; /* Number of requests for OpSys to queue */
+        Socket sock;
+        try {
+            ServerSocket servsock = new ServerSocket(Ports.BlockchainServerPort, q_len);
+            while (true) {
+                sock = servsock.accept();
+                new BlockchainWorker(sock, blockChainProcess).start();
+            }
+        } catch (IOException ioe) {
+            System.out.println(ioe);
+        }
+    }
 }
 
 class UnverifiedBlockServer implements Runnable {
-    BlockingQueue<BlockRecord> queue;
+    PriorityBlockingQueue<BlockRecord> queue;
 
-    UnverifiedBlockServer(BlockingQueue<BlockRecord> queue) {
-        this.queue = queue; // Constructor binds our prioirty queue to the local variable.
+    UnverifiedBlockServer(PriorityBlockingQueue<BlockRecord> queue) {
+        this.queue = queue;
     }
 
     /*
@@ -535,28 +763,6 @@ class UnverifiedBlockServer implements Runnable {
      * blocks (UVBs) into this queue in the order we get them, but they will be
      * retrieved by a consumer process sorted by TimeStamp of when created.
      */
-
-    class UnverifiedBlockWorker extends Thread { // Receive a UVB and put it into the shared priority queue.
-        Socket sock; // Class member, socket, local to Worker.
-
-        UnverifiedBlockWorker(Socket s) {
-            sock = s;
-        } // Constructor, assign arg s to local sock
-
-        public void run() {
-            try {
-                ObjectInputStream unverifiedIn = new ObjectInputStream(sock.getInputStream());
-                BlockRecord BR = (BlockRecord) unverifiedIn.readObject(); // Read in the UVB as an object
-                System.out.println(
-                        "Read in block id: " + BR.getBlockID() + " from process: " + BR.getVerificationProcessID());
-                queue.put(BR); // Note: make sure you have a large enough blocking priority queue to accept all
-                               // the puts
-                sock.close();
-            } catch (Exception x) {
-                x.printStackTrace();
-            }
-        }
-    }
 
     public void run() { // Start up the Unverified Block Receiving Server
         int q_len = 6; /* Number of requests for OpSys to queue */
@@ -568,10 +774,141 @@ class UnverifiedBlockServer implements Runnable {
             while (true) {
                 sock = UVBServer.accept(); // Got a new unverified block
                 // System.out.println("Got connection to UVB Server.");
-                new UnverifiedBlockWorker(sock).start(); // So start a thread to process it.
+                new UnverifiedBlockWorker(sock, queue).start(); // So start a thread to process it.
             }
         } catch (IOException ioe) {
             System.out.println(ioe);
+        }
+    }
+}
+
+class UnverifiedBlockWorker extends Thread {
+    Socket sock;
+    PriorityBlockingQueue<BlockRecord> queue;
+
+    UnverifiedBlockWorker(Socket s, PriorityBlockingQueue<BlockRecord> queue) {
+        sock = s;
+        this.queue = queue;
+    }
+
+    public void run() {
+        try {
+            ObjectInputStream unverifiedIn = new ObjectInputStream(sock.getInputStream());
+            BlockRecord BR = (BlockRecord) unverifiedIn.readObject();
+            System.out
+                    .println("Read in block id: " + BR.getBlockID() + " from process: " + BR.getSubmittingProcessID());
+            // BR.print();
+            queue.put(BR);
+            sock.close();
+        } catch (Exception x) {
+            x.printStackTrace();
+        }
+    }
+}
+
+class VerifyBlockWorker implements Runnable {
+
+    Blockchain parentProcess;
+
+    int winningNumber = 20000;
+
+    VerifyBlockWorker(Blockchain parentProcess) {
+        this.parentProcess = parentProcess;
+    }
+
+    public static String randomAlphaNumeric(int count) {
+        StringBuilder builder = new StringBuilder();
+        while (count-- != 0) {
+            int character = (int) (Math.random() * "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".length());
+            builder.append("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".charAt(character));
+        }
+        return builder.toString();
+    }
+
+    // sleeps between 0-3 seconds
+    public void randomSleep() throws Exception {
+        Thread.sleep((new Random().nextInt(3) * 1000));
+    }
+
+    public static String ByteArrayToString(byte[] ba) {
+        StringBuilder hex = new StringBuilder(ba.length * 2);
+        for (int i = 0; i < ba.length; i++) {
+            hex.append(String.format("%02X", ba[i]));
+        }
+        return hex.toString();
+    }
+
+    public void run() {
+        System.out.println("Run called, size of unverified block queue: " + parentProcess.unverifiedBlockQueue.size());
+        while (true) {
+            if (!parentProcess.unverifiedBlockQueue.isEmpty()) {
+                try {
+                    // pop the unverified block
+                    BlockRecord ub = parentProcess.unverifiedBlockQueue.poll();
+                    // System.out.println("Popped block: " + ub.BlockID + "pnum: " +
+                    // ub.SubmittingProcessID);
+
+                    // if block already got added to block chain
+                    // skip this iteration
+                    if (parentProcess.blockIsAlreadyInBlockchain(ub.BlockID)) {
+                        System.out.println("Block: " + ub.BlockID + " was already in blockchain, discarding it");
+                        continue;
+                    }
+
+                    // todo do work
+                    // work loop - will exit out as needed
+                    while (true) {
+                        // todo probably make this every three hash guesses or something
+                        if (!parentProcess.verifyUnverifiedBlockSignature(ub)) {
+                            System.out.println("Could not verify signature of block: " + ub.BlockID + " from process: "
+                                    + ub.SubmittingProcessID);
+                            break;
+                        }
+                        randomSleep();
+                        String randString = randomAlphaNumeric(8);
+                        String blockData = ub.getDataForValidation();
+
+                        String previousHash = parentProcess.blockchain.getLast().getWinningHash();
+
+                        String concatDataForHash = previousHash + blockData + randString;
+
+                        MessageDigest MD = MessageDigest.getInstance("SHA-256");
+                        byte[] bytesHash = MD.digest(concatDataForHash.getBytes("UTF-8"));
+
+                        String stringHash = ByteArrayToString(bytesHash);
+
+                        System.out.println("stringHash is: " + stringHash);
+                        int intHash = Integer.parseInt(stringHash.substring(0, 4), 16);
+
+                        if (intHash < winningNumber) {
+                            System.out.println("Winning hash: " + stringHash);
+                            ub.setVerificationProcessID(parentProcess.pnum);
+                            ub.setWinningHash(stringHash);
+
+                            // set previous hash... careful that blockchain is updated here
+                            ub.setPreviousHash(parentProcess.blockchain.getLast().getWinningHash());
+                            ub.setBlockInteger(parentProcess.blockchain.getLast().getBlockInteger() + 1);
+                            ub.setRandomSeed(randString);
+                            break;
+                        }
+                    }
+
+                    // check that block is from a valid process
+                    if (!parentProcess.verifyUnverifiedBlockSignature(ub)) {
+                        System.out.println("Could not verify signature of block: " + ub.BlockID + " from process: "
+                                + ub.SubmittingProcessID);
+                        continue;
+                    }
+                    // if at this point ub is verified block now
+
+                    parentProcess.sendVerifiedBlocks(ub);
+
+                } catch (Exception x) {
+                    x.printStackTrace();
+                    continue;
+                }
+
+            }
         }
     }
 }
