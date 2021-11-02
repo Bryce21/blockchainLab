@@ -230,15 +230,19 @@ public class Blockchain {
         try {
             Iterator<BlockRecord> iterator = unverifiedBlocks.iterator();
 
-            ObjectOutputStream toServerOOS = null;
+            // ObjectOutputStream toServerOOS = null;
+            // PrintStream toServerOOS;
             for (int i = 0; i < numberProcesses; i++) {
                 iterator = unverifiedBlocks.iterator();
                 while (iterator.hasNext()) {
                     UVBsock = new Socket(serverName, Ports.UnverifiedBlockServerPortBase + (i * 1000));
-                    toServerOOS = new ObjectOutputStream(UVBsock.getOutputStream());
+                    PrintStream toServerOOS = new PrintStream(UVBsock.getOutputStream());
                     Thread.sleep((r.nextInt(9) * 100));
                     BlockRecord currentBlock = iterator.next();
-                    toServerOOS.writeObject(currentBlock);
+
+                    // send the json string representing the currentBlock of the unverified blocks
+                    // read in from file
+                    toServerOOS.println(new Gson().toJson(currentBlock));
                     toServerOOS.flush();
                     UVBsock.close();
                 }
@@ -805,11 +809,14 @@ class UnverifiedBlockWorker extends Thread {
 
     public void run() {
         try {
-            ObjectInputStream unverifiedIn = new ObjectInputStream(sock.getInputStream());
-            BlockRecord BR = (BlockRecord) unverifiedIn.readObject();
+
+            BufferedReader unverifiedBlockInput = new BufferedReader(new InputStreamReader(sock.getInputStream()));
+            // Json string representation of BlockRecord class for this unverified block
+            String stringProcess = unverifiedBlockInput.readLine();
+            // convert the string json to BlockRecord class object
+            BlockRecord BR = new Gson().fromJson(stringProcess, BlockRecord.class);
             System.out
                     .println("Read in block id: " + BR.getBlockID() + " from process: " + BR.getSubmittingProcessID());
-            // BR.print();
             queue.put(BR);
             sock.close();
         } catch (Exception x) {
