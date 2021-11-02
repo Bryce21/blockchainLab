@@ -164,7 +164,7 @@ public class Blockchain {
     }
 
     public void printBlockchain() {
-        System.out.println("Printing block chain of size: " + blockchain.size() + " blockIds: ");
+        System.out.println("Printing block chain of size: " + blockchain.size());
         System.out.println("blockInt,previousHash,winningHash,verifyingProcess,submittingProcess");
         for (int i = 0; i < blockchain.size(); i++) {
             BlockRecord currentBlock = blockchain.get(i);
@@ -294,13 +294,14 @@ public class Blockchain {
 
     public void sendVerifiedBlocks(BlockRecord verifiedBlock) {
         try {
-
             if (!blockIsAlreadyInBlockchain(verifiedBlock.BlockID)) {
                 System.out.println("Sent verified blockID: " + verifiedBlock.BlockID + " from process: " + pnum);
                 for (int i = 0; i < numberProcesses; i++) {
                     Socket BlockChainSock = new Socket(serverName, Ports.BlockchainServerPortBase + (i * 1000));
-                    ObjectOutputStream toServer = new ObjectOutputStream(BlockChainSock.getOutputStream());
-                    toServer.writeObject(verifiedBlock);
+                    PrintStream toServer = new PrintStream(BlockChainSock.getOutputStream());
+
+                    // send the json string representing the currentBlock of the verified blocks
+                    toServer.println(new Gson().toJson(verifiedBlock));
                     toServer.flush();
                     BlockChainSock.close();
                 }
@@ -728,8 +729,11 @@ class BlockchainWorker extends Thread {
 
     public void run() {
         try {
-            ObjectInputStream verifiedBlock = new ObjectInputStream(sock.getInputStream());
-            BlockRecord BR = (BlockRecord) verifiedBlock.readObject();
+            BufferedReader verifiedBlockInput = new BufferedReader(new InputStreamReader(sock.getInputStream()));
+            // Json string representation of BlockRecord class for this verified block
+            String stringProcess = verifiedBlockInput.readLine();
+            // convert the string json to BlockRecord class object
+            BlockRecord BR = new Gson().fromJson(stringProcess, BlockRecord.class);
 
             // check that block chain doesn't already contain block
             if (!blockchainProcess.blockIsAlreadyInBlockchain(BR.BlockID)) {
