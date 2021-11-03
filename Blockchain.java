@@ -1,3 +1,20 @@
+/*
+    1: Bryce Reinhard / 11/3/21
+    2: java version "16.0.2" 2021-07-20
+    3:
+        In three separate terminal windows:
+            java -cp gson-2.8.2.jar Blockchain.java 0
+            java -cp gson-2.8.2.jar Blockchain.java 1
+            java -cp gson-2.8.2.jar Blockchain.java 2
+    4:
+        See 3
+    5:
+        gson jar, Blockchain.java, BlockInput0.txt, BlockInput1.txt, BlockInput2.txt
+    6:
+        Everything seems to work as expected for me
+        But I didn't test "unhappy" paths such as invalid signatures
+*/
+
 import java.net.*;
 import java.util.*;
 import java.io.*;
@@ -128,7 +145,7 @@ public class Blockchain {
     // only if process 0
     public void WriteBlockChainToFile() {
         if (pnum == 0) {
-            String filename = "p_0_blockchain.json";
+            String filename = "BlockchainLedger.json";
             Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
             // Write the JSON object to a file:
