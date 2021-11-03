@@ -1,0 +1,358 @@
+Process 0:
+java -cp gson-2.8.2.jar Blockchain.java 0
+Waiting to contact other processes. Started by process with pnum 2 starting up... Known processes: 0
+Waiting to contact other processes. Started by process with pnum 2 starting up... Known processes: 0
+Waiting to contact other processes. Started by process with pnum 2 starting up... Known processes: 0
+Key send started from pnum:0
+Recieved other processes information
+Known processes size: 3
+Using input file: BlockInput0.txt
+Starting the Unverified Block Server input thread using 6051
+4 records read.
+
+Size of read blocks from file: 4
+Read in block id: 6606446e-92bb-4ebd-80b6-f87a06da8f97 from process: 0
+Read in block id: 657e05a4-0593-4da7-b294-07901f37e64d from process: 0
+Read in block id: 2528c3ac-0844-4604-93e0-e98b10d692f2 from process: 0
+Read in block id: fce48a46-98ce-460c-8f89-53f5f52d259d from process: 0
+Read in block id: 1c054f64-fe5c-40b3-9468-ac0bda530c66 from process: 1
+Read in block id: e349d8e3-ad92-4648-b4dd-2f0a8918fa89 from process: 1
+Read in block id: 2d8b3afc-e2bf-4321-9dec-016edee63b7d from process: 2
+Read in block id: 88e10aa3-44f3-433d-8d63-3df91a73787f from process: 2
+Waiting for unverified block queue to empty... Size: 8
+Run called, size of unverified block queue: 8
+intHash: 25047
+Read in block id: bdb5ec07-d388-4a84-87a7-fb65b5534a59 from process: 2
+Read in block id: d749dad4-3a61-426a-ac05-a0b6db8d44cf from process: 1
+Read in block id: f3fd1a31-6662-4a58-81f1-7faad05fa8b5 from process: 2
+Read in block id: 9d6097af-5c9f-4a3f-9edf-759d26019020 from process: 1
+intHash: 58860
+intHash: 15823
+Waiting for unverified block queue to empty... Size: 11
+intHash: 30098
+intHash: 16942
+Adding BlockId to blockchain: 6606446e-92bb-4ebd-80b6-f87a06da8f97
+intHash: 60630
+Waiting for unverified block queue to empty... Size: 10
+intHash: 58858
+intHash: 30894
+Waiting for unverified block queue to empty... Size: 10
+intHash: 3449
+Winning hash: 0D79D2A6EDE953FC781882087DDE801FA02AE64E1857CBE8BE8A177F78BD3070
+Sent verified blockID: 657e05a4-0593-4da7-b294-07901f37e64d from process: 0
+Adding BlockId to blockchain: 657e05a4-0593-4da7-b294-07901f37e64d
+intHash: 13477
+intHash: 15342
+Waiting for unverified block queue to empty... Size: 9
+intHash: 39801
+intHash: 54876
+intHash: 11210
+Adding BlockId to blockchain: 2528c3ac-0844-4604-93e0-e98b10d692f2
+Waiting for unverified block queue to empty... Size: 9
+intHash: 18614
+intHash: 23371
+Adding BlockId to blockchain: 1c054f64-fe5c-40b3-9468-ac0bda530c66
+Waiting for unverified block queue to empty... Size: 8
+intHash: 29751
+intHash: 29790
+intHash: 50666
+intHash: 469
+Winning hash: 01D55565270D324D072DF8EAF8970F7032B21C3D4602362D00E20D44D618F2DF
+Sent verified blockID: 2d8b3afc-e2bf-4321-9dec-016edee63b7d from process: 0
+Adding BlockId to blockchain: 2d8b3afc-e2bf-4321-9dec-016edee63b7d
+Waiting for unverified block queue to empty... Size: 6
+intHash: 12627
+Adding BlockId to blockchain: fce48a46-98ce-460c-8f89-53f5f52d259d
+Adding BlockId to blockchain: e349d8e3-ad92-4648-b4dd-2f0a8918fa89
+Waiting for unverified block queue to empty... Size: 6
+intHash: 17994
+Block: e349d8e3-ad92-4648-b4dd-2f0a8918fa89 was already in blockchain, discarding it
+intHash: 17976
+Waiting for unverified block queue to empty... Size: 4
+intHash: 21177
+Adding BlockId to blockchain: 88e10aa3-44f3-433d-8d63-3df91a73787f
+intHash: 13058
+Waiting for unverified block queue to empty... Size: 3
+intHash: 10666
+intHash: 58042
+intHash: 44581
+intHash: 46768
+Adding BlockId to blockchain: d749dad4-3a61-426a-ac05-a0b6db8d44cf
+Waiting for unverified block queue to empty... Size: 3
+intHash: 22493
+intHash: 27353
+Waiting for unverified block queue to empty... Size: 2
+intHash: 13137
+intHash: 29368
+intHash: 31430
+intHash: 4315
+Winning hash: 10DB417044D29304AC469B2E8A008DC3A73928655CD8A3F26E0B08FA760DE08F
+Sent verified blockID: bdb5ec07-d388-4a84-87a7-fb65b5534a59 from process: 0
+Adding BlockId to blockchain: bdb5ec07-d388-4a84-87a7-fb65b5534a59
+Waiting for unverified block queue to empty... Size: 1
+intHash: 60087
+Adding BlockId to blockchain: 9d6097af-5c9f-4a3f-9edf-759d26019020
+intHash: 2892
+Winning hash: 0B4CBBF1948ED9AFC50FFEDDEFE6868617D72ED49DE2538FD3CE350F73AC09B0
+Blockchain size after verification: 12
+Unverified blocks queue after verification: 0
+intHash: 10164
+intHash: 9274
+Winning hash: 243AAE0BBD3D5FB9809DA2636B3AF1FD16B36CFEE1C4B8255D77F43C61656F4B
+Sent verified blockID: f3fd1a31-6662-4a58-81f1-7faad05fa8b5 from process: 0
+Adding BlockId to blockchain: f3fd1a31-6662-4a58-81f1-7faad05fa8b5
+Printing block chain of size: 13
+blockInt,previousHash,winningHash,verifyingProcess,submittingProcess
+0,null,000000000,0,0
+1,00000,0C3C9,1,0
+2,0C3C9,0D79D,0,0
+3,0D79D,109F0,2,0
+4,109F0,0B424,1,1
+5,0B424,01D55,0,2
+6,01D55,08093,2,0
+7,08093,140C6,2,1
+8,140C6,13A7E,2,2
+9,13A7E,013F0,2,1
+10,013F0,10DB4,0,2
+11,10DB4,06162,1,1
+12,06162,243AA,0,2
+
+
+Process 1:
+java -cp gson-2.8.2.jar Blockchain.java 1
+Waiting to contact other processes. Started by process with pnum 2 starting up... Known processes: 0
+Waiting to contact other processes. Started by process with pnum 2 starting up... Known processes: 0
+Key send started from pnum:1
+Recieved other processes information
+Known processes size: 3
+Starting the Unverified Block Server input thread using 7051
+Using input file: BlockInput1.txt
+Read in block id: 6606446e-92bb-4ebd-80b6-f87a06da8f97 from process: 0
+Read in block id: 657e05a4-0593-4da7-b294-07901f37e64d from process: 0
+Read in block id: 2528c3ac-0844-4604-93e0-e98b10d692f2 from process: 0
+4 records read.
+
+Size of read blocks from file: 4
+Read in block id: fce48a46-98ce-460c-8f89-53f5f52d259d from process: 0
+Read in block id: 2d8b3afc-e2bf-4321-9dec-016edee63b7d from process: 2
+Read in block id: 88e10aa3-44f3-433d-8d63-3df91a73787f from process: 2
+Read in block id: 1c054f64-fe5c-40b3-9468-ac0bda530c66 from process: 1
+Read in block id: bdb5ec07-d388-4a84-87a7-fb65b5534a59 from process: 2
+Read in block id: f3fd1a31-6662-4a58-81f1-7faad05fa8b5 from process: 2
+Read in block id: e349d8e3-ad92-4648-b4dd-2f0a8918fa89 from process: 1
+Read in block id: d749dad4-3a61-426a-ac05-a0b6db8d44cf from process: 1
+Read in block id: 9d6097af-5c9f-4a3f-9edf-759d26019020 from process: 1
+Waiting for unverified block queue to empty... Size: 12
+Run called, size of unverified block queue: 12
+intHash: 3132
+Winning hash: 0C3C9D2EA7E94E6DA2330D2C83D81E4F2940ACF87C17F87F291DB06D2AB41C17
+Sent verified blockID: 6606446e-92bb-4ebd-80b6-f87a06da8f97 from process: 1
+Adding BlockId to blockchain: 6606446e-92bb-4ebd-80b6-f87a06da8f97
+intHash: 29493
+intHash: 13781
+intHash: 40101
+intHash: 20307
+Waiting for unverified block queue to empty... Size: 10
+intHash: 63070
+intHash: 58921
+intHash: 15762
+intHash: 51237
+Adding BlockId to blockchain: 657e05a4-0593-4da7-b294-07901f37e64d
+Waiting for unverified block queue to empty... Size: 10
+intHash: 53307
+Waiting for unverified block queue to empty... Size: 9
+intHash: 27102
+Adding BlockId to blockchain: 2528c3ac-0844-4604-93e0-e98b10d692f2
+intHash: 1984
+Winning hash: 07C0608DF401ACBE125563A16075E276A4CF63E1A0A34C2136B2CB0A9784F6E4
+Waiting for unverified block queue to empty... Size: 8
+intHash: 34511
+intHash: 2882
+Winning hash: 0B42401218E11CBC0D44AC2B3066C18290FD39F331332AD59EC1AE8DE48607DA
+Sent verified blockID: 1c054f64-fe5c-40b3-9468-ac0bda530c66 from process: 1
+Adding BlockId to blockchain: 1c054f64-fe5c-40b3-9468-ac0bda530c66
+Waiting for unverified block queue to empty... Size: 7
+intHash: 16265
+Adding BlockId to blockchain: 2d8b3afc-e2bf-4321-9dec-016edee63b7d
+intHash: 376
+Winning hash: 0178B66D5B675BAEC6BFA8D9DCB67683AAF916A65A18D506B9F76B05651FF406
+Waiting for unverified block queue to empty... Size: 6
+Adding BlockId to blockchain: fce48a46-98ce-460c-8f89-53f5f52d259d
+Adding BlockId to blockchain: e349d8e3-ad92-4648-b4dd-2f0a8918fa89
+intHash: 55816
+Block: e349d8e3-ad92-4648-b4dd-2f0a8918fa89 was already in blockchain, discarding it
+intHash: 44643
+intHash: 53430
+intHash: 42382
+Waiting for unverified block queue to empty... Size: 4
+intHash: 46676
+intHash: 38540
+intHash: 24366
+intHash: 13565
+intHash: 41474
+intHash: 24057
+intHash: 38088
+intHash: 57181
+Adding BlockId to blockchain: 88e10aa3-44f3-433d-8d63-3df91a73787f
+Waiting for unverified block queue to empty... Size: 4
+intHash: 37221
+intHash: 48882
+intHash: 37714
+intHash: 18915
+intHash: 35357
+intHash: 55492
+Waiting for unverified block queue to empty... Size: 3
+intHash: 49388
+Adding BlockId to blockchain: d749dad4-3a61-426a-ac05-a0b6db8d44cf
+intHash: 6282
+Winning hash: 188AF1D958C3277DFD3F3E593E2A7BDC61E0762441D65252F0320AD587B9B524
+intHash: 18697
+Waiting for unverified block queue to empty... Size: 2
+intHash: 23670
+intHash: 55548
+Waiting for unverified block queue to empty... Size: 2
+intHash: 53468
+Adding BlockId to blockchain: bdb5ec07-d388-4a84-87a7-fb65b5534a59
+intHash: 14817
+Waiting for unverified block queue to empty... Size: 1
+intHash: 64884
+intHash: 1558
+Winning hash: 0616258DA9F5D8F506767369235049C5077EA2143B7218847DFC2A4CAA1385E4
+Sent verified blockID: 9d6097af-5c9f-4a3f-9edf-759d26019020 from process: 1
+Adding BlockId to blockchain: 9d6097af-5c9f-4a3f-9edf-759d26019020
+Blockchain size after verification: 12
+Unverified blocks queue after verification: 0
+intHash: 16803
+Adding BlockId to blockchain: f3fd1a31-6662-4a58-81f1-7faad05fa8b5
+intHash: 57069
+Printing block chain of size: 13
+blockInt,previousHash,winningHash,verifyingProcess,submittingProcess
+0,null,000000000,0,0
+1,00000,0C3C9,1,0
+2,0C3C9,0D79D,0,0
+3,0D79D,109F0,2,0
+4,109F0,0B424,1,1
+5,0B424,01D55,0,2
+6,01D55,08093,2,0
+7,08093,140C6,2,1
+8,140C6,13A7E,2,2
+9,13A7E,013F0,2,1
+10,013F0,10DB4,0,2
+11,10DB4,06162,1,1
+12,06162,243AA,0,2
+
+
+Process 2:
+java -cp gson-2.8.2.jar Blockchain.java 2
+Key send started from pnum:2
+Waiting to contact other processes. Started by process with pnum 2 starting up... Known processes: 0
+Recieved other processes information
+Known processes size: 3
+Starting the Unverified Block Server input thread using 8051
+Using input file: BlockInput2.txt
+4 records read.
+
+Size of read blocks from file: 4
+Read in block id: 6606446e-92bb-4ebd-80b6-f87a06da8f97 from process: 0
+Read in block id: 657e05a4-0593-4da7-b294-07901f37e64d from process: 0
+Read in block id: 2528c3ac-0844-4604-93e0-e98b10d692f2 from process: 0
+Read in block id: fce48a46-98ce-460c-8f89-53f5f52d259d from process: 0
+Read in block id: 2d8b3afc-e2bf-4321-9dec-016edee63b7d from process: 2
+Read in block id: 88e10aa3-44f3-433d-8d63-3df91a73787f from process: 2
+Read in block id: bdb5ec07-d388-4a84-87a7-fb65b5534a59 from process: 2
+Waiting for unverified block queue to empty... Size: 7
+Run called, size of unverified block queue: 7
+Read in block id: f3fd1a31-6662-4a58-81f1-7faad05fa8b5 from process: 2
+Read in block id: 1c054f64-fe5c-40b3-9468-ac0bda530c66 from process: 1
+Read in block id: e349d8e3-ad92-4648-b4dd-2f0a8918fa89 from process: 1
+Read in block id: d749dad4-3a61-426a-ac05-a0b6db8d44cf from process: 1
+intHash: 61240
+Read in block id: 9d6097af-5c9f-4a3f-9edf-759d26019020 from process: 1
+Adding BlockId to blockchain: 6606446e-92bb-4ebd-80b6-f87a06da8f97
+Waiting for unverified block queue to empty... Size: 11
+intHash: 19136
+intHash: 14329
+intHash: 34545
+Waiting for unverified block queue to empty... Size: 10
+Adding BlockId to blockchain: 657e05a4-0593-4da7-b294-07901f37e64d
+intHash: 53505
+Waiting for unverified block queue to empty... Size: 9
+intHash: 41722
+intHash: 23958
+intHash: 38123
+intHash: 4255
+Winning hash: 109F01F1BE99C17AC4656C89B9F4139C555317CE5D2D988A5DF549A048809AB9
+Sent verified blockID: 2528c3ac-0844-4604-93e0-e98b10d692f2 from process: 2
+Adding BlockId to blockchain: 2528c3ac-0844-4604-93e0-e98b10d692f2
+Waiting for unverified block queue to empty... Size: 8
+intHash: 61334
+intHash: 64613
+Adding BlockId to blockchain: 1c054f64-fe5c-40b3-9468-ac0bda530c66
+Waiting for unverified block queue to empty... Size: 8
+intHash: 52802
+intHash: 49349
+intHash: 38264
+intHash: 49814
+Adding BlockId to blockchain: 2d8b3afc-e2bf-4321-9dec-016edee63b7d
+Waiting for unverified block queue to empty... Size: 7
+intHash: 38533
+intHash: 46563
+intHash: 2057
+Winning hash: 08093FF71F7F96393A037FE337D1B4F191CD68D3887EF9FB940C7EFD6BB5EA79
+Sent verified blockID: fce48a46-98ce-460c-8f89-53f5f52d259d from process: 2
+Adding BlockId to blockchain: fce48a46-98ce-460c-8f89-53f5f52d259d
+intHash: 16170
+intHash: 5132
+Winning hash: 140C6FF30A18C565661496EF9029E4AD7F0064F94E3C26A5CDE2E92A4B03AA05
+Sent verified blockID: e349d8e3-ad92-4648-b4dd-2f0a8918fa89 from process: 2
+Adding BlockId to blockchain: e349d8e3-ad92-4648-b4dd-2f0a8918fa89
+Waiting for unverified block queue to empty... Size: 4
+intHash: 51986
+intHash: 39325
+intHash: 33302
+intHash: 36155
+intHash: 33415
+Waiting for unverified block queue to empty... Size: 4
+intHash: 5031
+Winning hash: 13A7E1104FC5A605FAE16C1C0C02284C90A596C41C682EB6CDFF16079E3065D6
+Sent verified blockID: 88e10aa3-44f3-433d-8d63-3df91a73787f from process: 2
+Adding BlockId to blockchain: 88e10aa3-44f3-433d-8d63-3df91a73787f
+Waiting for unverified block queue to empty... Size: 3
+intHash: 19496
+intHash: 13792
+Waiting for unverified block queue to empty... Size: 3
+intHash: 319
+Winning hash: 013F0D8A8B25F84001D2F318F9CD2D2999608EB728A11A6F00F0662466615DF0
+Sent verified blockID: d749dad4-3a61-426a-ac05-a0b6db8d44cf from process: 2
+Adding BlockId to blockchain: d749dad4-3a61-426a-ac05-a0b6db8d44cf
+intHash: 11314
+Waiting for unverified block queue to empty... Size: 2
+intHash: 41487
+Adding BlockId to blockchain: bdb5ec07-d388-4a84-87a7-fb65b5534a59
+Waiting for unverified block queue to empty... Size: 2
+intHash: 37799
+intHash: 12041
+intHash: 28302
+Adding BlockId to blockchain: 9d6097af-5c9f-4a3f-9edf-759d26019020
+Waiting for unverified block queue to empty... Size: 1
+intHash: 46166
+intHash: 63831
+Adding BlockId to blockchain: f3fd1a31-6662-4a58-81f1-7faad05fa8b5
+Blockchain size after verification: 13
+Unverified blocks queue after verification: 0
+intHash: 26344
+Printing block chain of size: 13
+blockInt,previousHash,winningHash,verifyingProcess,submittingProcess
+0,null,000000000,0,0
+1,00000,0C3C9,1,0
+2,0C3C9,0D79D,0,0
+3,0D79D,109F0,2,0
+4,109F0,0B424,1,1
+5,0B424,01D55,0,2
+6,01D55,08093,2,0
+7,08093,140C6,2,1
+8,140C6,13A7E,2,2
+9,13A7E,013F0,2,1
+10,013F0,10DB4,0,2
+11,10DB4,06162,1,1
+12,06162,243AA,0,2
