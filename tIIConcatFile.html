@@ -1,0 +1,2734 @@
+<pre>
+    /*
+    1: Bryce Reinhard / 11/3/21
+    2: java version "16.0.2" 2021-07-20
+    3:
+        In three separate terminal windows:
+            java -cp gson-2.8.2.jar Blockchain.java 0
+            java -cp gson-2.8.2.jar Blockchain.java 1
+            java -cp gson-2.8.2.jar Blockchain.java 2
+    4:
+        See 3
+    5:
+        gson jar, Blockchain.java, BlockInput0.txt, BlockInput1.txt, BlockInput2.txt
+    6:
+        Everything seems to work as expected for me
+        But I didn't test "unhappy" paths such as invalid signatures
+*/
+
+import java.net.*;
+import java.util.*;
+import java.io.*;
+import java.util.concurrent.*;
+// Ah, heck:
+import java.security.KeyFactory;
+
+/* CDE: The encryption needed for signing the hash: */
+
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+// Produces a 64-bye string representing 256 bits of the hash output. 4 bits per character
+import java.security.MessageDigest; // To produce the SHA-256 hash.
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.SecureRandom;
+import java.security.Signature;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
+import java.util.Base64;
+
+/* CDE Some other uitilities: */
+
+import java.util.Date;
+import java.util.Random;
+import java.util.UUID;
+
+import javax.crypto.Cipher;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+
+public class Blockchain {
+
+    // which process number (0-2)
+    int pnum;
+    int numberProcesses = 3;
+    String serverName = "localhost";
+
+    // whether this Blockchain process sent keys
+    boolean sentKey = false;
+    // public and private keys of process
+    KeyPair keyPair;
+
+    // ArrayList to track known other processes and their public keys
+    ArrayList<Process> knownProcesses = new ArrayList<Process>();
+
+    LinkedList<BlockRecord> blockchain = new LinkedList<BlockRecord>();
+
+    /* Token indexes for input: */
+    private static final int iFNAME = 0;
+    private static final int iLNAME = 1;
+    private static final int iDOB = 2;
+    private static final int iSSNUM = 3;
+    private static final int iDIAG = 4;
+    private static final int iTREAT = 5;
+    private static final int iRX = 6;
+
+    public static Comparator<BlockRecord> BlockTSComparator = new Comparator<BlockRecord>() {
+        @Override
+        public int compare(BlockRecord b1, BlockRecord b2) {
+            String s1 = b1.getTimeStamp();
+            String s2 = b2.getTimeStamp();
+            if (s1 == s2) {
+                return 0;
+            }
+            if (s1 == null) {
+                return -1;
+            }
+            if (s2 == null) {
+                return 1;
+            }
+            return s1.compareTo(s2);
+        }
+    };
+
+    final PriorityBlockingQueue<BlockRecord> unverifiedBlockQueue = new PriorityBlockingQueue<>(100, BlockTSComparator);
+
+    public Blockchain(String args[]) {
+    }
+
+    public static void main(String args[]) {
+        try {
+            Blockchain bc = new Blockchain(args);
+            bc.run(args);
+        } catch (Exception x) {
+            System.out.println(x.getMessage());
+        }
+
+    }
+
+    public void run(String args[]) throws Exception {
+        basicSetup(args);
+        // registers other processes information
+        apiKeysSetup();
+        System.out.println("Known processes size: " + knownProcesses.size());
+
+        // start unverified block listener
+        new Thread(new UnverifiedBlockServer(unverifiedBlockQueue)).start();
+        new Thread(new BlockchainServer(this)).start();
+
+        // read input, create unverified blocks
+        // realistically should not be blocking and should have it's own thread
+        LinkedList<BlockRecord> unverifiedBlocks = getUnverifiedBlocks();
+        System.out.println("Size of read blocks from file: " + unverifiedBlocks.size());
+
+        // send the read unverified blocks to processes
+        // read into priority queue
+        sendUnverifiedBlocks(unverifiedBlocks);
+
+        // thread to start verifying blocks
+        new Thread(new VerifyBlockWorker(this)).start();
+        while (!unverifiedBlockQueue.isEmpty()) {
+            System.out.println("Waiting for unverified block queue to empty... Size: " + unverifiedBlockQueue.size());
+            Thread.sleep(3000);
+        }
+        System.out.println("Blockchain size after verification: " + blockchain.size());
+        System.out.println("Unverified blocks queue after verification: " + unverifiedBlockQueue.size());
+        // Add sleep to pretty much guarantee printing happens when done
+        Thread.sleep(6000);
+        // this prints blockchain to console
+        printBlockchain();
+
+    }
+
+    // write the blockchain object to file
+    // only if process 0
+    public void WriteBlockChainToFile() {
+        if (pnum == 0) {
+            String filename = "BlockchainLedger.json";
+            Gson gson = new GsonBuilder().setPrettyPrinting().create();
+
+            // Write the JSON object to a file:
+            try (FileWriter writer = new FileWriter(filename)) {
+                gson.toJson(blockchain, writer);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    // helper method to print the unverified block queue
+    public void printUnverifiedBlocksQueue() {
+        System.out.println("Printing unverified block queue with size: " + unverifiedBlockQueue.size());
+        Iterator queueIterator = unverifiedBlockQueue.iterator();
+        while (queueIterator.hasNext()) {
+            BlockRecord current = (BlockRecord) queueIterator.next();
+            current.print();
+        }
+    }
+
+    // return true if already in blockchain
+    public boolean blockIsAlreadyInBlockchain(String blockId) {
+        for (int i = 0; i < blockchain.size(); i++) {
+            BlockRecord currentBlock = blockchain.get(i);
+            if (currentBlock.BlockID.equals(blockId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // helper method to print blockchain as a csv in a dumb way
+    public void printBlockchain() {
+        System.out.println("Printing block chain of size: " + blockchain.size());
+        System.out.println("blockInt,previousHash,winningHash,verifyingProcess,submittingProcess");
+        for (int i = 0; i < blockchain.size(); i++) {
+            BlockRecord currentBlock = blockchain.get(i);
+            if (i == 0) {
+                System.out.println(currentBlock.getBlockInteger() + "," + currentBlock.getPreviousHash() + ","
+                        + currentBlock.getWinningHash() + "," + currentBlock.VerificationProcessID + ","
+                        + currentBlock.SubmittingProcessID);
+            } else {
+                System.out.println(currentBlock.getBlockInteger() + "," + currentBlock.getPreviousHash().substring(0, 5)
+                        + "," + currentBlock.getWinningHash().substring(0, 5) + "," + currentBlock.VerificationProcessID
+                        + "," + currentBlock.SubmittingProcessID);
+            }
+
+        }
+    }
+
+    // returns true if signature is valid
+    // returns false if signature is invalid
+    // check that signed blockID is equal to blockID
+    public boolean verifyUnverifiedBlockSignature(BlockRecord ub) throws NoSuchAlgorithmException, Exception {
+        Signature signer = Signature.getInstance("SHA1withRSA");
+
+        // get the process that submitted this block
+        Process parentProcess = findProcessByProcessId(ub.SubmittingProcessID);
+        if (parentProcess == null) {
+            return false;
+        }
+        // rebuild the public key from its bytes
+        X509EncodedKeySpec pubSpec = new X509EncodedKeySpec(parentProcess.publicKey);
+        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+        PublicKey RestoredKey = keyFactory.generatePublic(pubSpec);
+
+        signer.initVerify(RestoredKey);
+        signer.update(ub.BlockID.getBytes());
+
+        return signer.verify(ub.SignedBlockID);
+    }
+
+    // search known processes to find a specific process pnum
+    public Process findProcessByProcessId(int parentProcessPnum) {
+        for (int i = 0; i < knownProcesses.size(); i++) {
+            Process currentProcess = knownProcesses.get(i);
+            if (currentProcess.pnum == parentProcessPnum) {
+                return currentProcess;
+            }
+        }
+        System.out.println("Could not find knownProcess with pnum:" + parentProcessPnum);
+        return null;
+    }
+
+    // method to verify a signature using a public key
+    public boolean verifySig(byte[] data, PublicKey key, byte[] sig) throws Exception {
+        Signature signer = Signature.getInstance("SHA1withRSA");
+        signer.initVerify(key);
+        signer.update(data);
+
+        return (signer.verify(sig));
+    }
+
+    // sends unverified blocks in this process to other processes
+    // multicast unverified blocks into process queues
+    public void sendUnverifiedBlocks(LinkedList<BlockRecord> unverifiedBlocks) {
+        Socket UVBsock;
+        Random r = new Random();
+        try {
+            Iterator<BlockRecord> iterator = unverifiedBlocks.iterator();
+            for (int i = 0; i < numberProcesses; i++) {
+                // iterate through the linked list and send the unverified blocks to other
+                // processes
+                iterator = unverifiedBlocks.iterator();
+                while (iterator.hasNext()) {
+                    UVBsock = new Socket(serverName, Ports.UnverifiedBlockServerPortBase + (i * 1000));
+                    PrintStream toServerOOS = new PrintStream(UVBsock.getOutputStream());
+                    Thread.sleep((r.nextInt(9) * 100));
+                    BlockRecord currentBlock = iterator.next();
+
+                    // send the json string representing the currentBlock of the unverified blocks
+                    // read in from file
+                    toServerOOS.println(new Gson().toJson(currentBlock));
+                    toServerOOS.flush();
+                    UVBsock.close();
+                }
+            }
+        } catch (Exception x) {
+            x.printStackTrace();
+        }
+    }
+
+    // reads in pnum, initializes ports, generates keys, initialize blockchain with
+    // genesesis block
+    public void basicSetup(String[] args) throws Exception {
+        // set up process number
+        pnum = readPNum(args);
+
+        // initialize ports
+        new Ports().setPorts(pnum);
+
+        // get key information
+        keyPair = generateKeyPair(new Random().nextLong());
+
+        // genesis block has to always be the same for each process
+        // so can't add in a lot of information
+        BlockRecord genesisBlock = new BlockRecord();
+        genesisBlock.setBlockID("genesisBlock");
+        genesisBlock.setWinningHash("000000000");
+        genesisBlock.setBlockInteger(0);
+        blockchain.add(genesisBlock);
+    }
+
+    public void apiKeysSetup() throws Exception {
+        // startup key listener
+        new Thread(new PublicKeyServer(this)).start();
+
+        // Start sending keys if pnum 2
+        if (pnum == 2) {
+            KeySend();
+        }
+        // Have to wait till gathered all process information
+        while (knownProcesses.size() < numberProcesses) {
+            System.out.println(
+                    "Waiting to contact other processes. Started by process with pnum 2 starting up... Known processes: "
+                            + knownProcesses.size());
+            Thread.sleep(3000);
+        }
+        System.out.println("Recieved other processes information");
+    }
+
+    // send a verified block to other processes
+    public void sendVerifiedBlocks(BlockRecord verifiedBlock) {
+        try {
+            // check that ii isn't already in the blockchain
+            if (!blockIsAlreadyInBlockchain(verifiedBlock.BlockID)) {
+                System.out.println("Sent verified blockID: " + verifiedBlock.BlockID + " from process: " + pnum);
+                for (int i = 0; i < numberProcesses; i++) {
+                    Socket BlockChainSock = new Socket(serverName, Ports.BlockchainServerPortBase + (i * 1000));
+                    PrintStream toServer = new PrintStream(BlockChainSock.getOutputStream());
+
+                    // send the json string representing the currentBlock of the verified blocks
+                    toServer.println(new Gson().toJson(verifiedBlock));
+                    toServer.flush();
+                    BlockChainSock.close();
+                }
+            }
+
+        } catch (Exception e) {
+            System.out.println("Exception sending verified block to other processes");
+            e.printStackTrace();
+        }
+
+    }
+
+    // add to known process
+    public void addProcess(Process process) {
+        knownProcesses.add(process);
+    }
+
+    public static KeyPair generateKeyPair(long seed) throws Exception {
+        KeyPairGenerator keyGenerator = KeyPairGenerator.getInstance("RSA");
+        SecureRandom rng = SecureRandom.getInstance("SHA1PRNG", "SUN");
+        rng.setSeed(seed);
+        keyGenerator.initialize(1024, rng);
+
+        return (keyGenerator.generateKeyPair());
+    }
+
+    // Send the current process information to other processes
+    public void KeySend() {
+        System.out.println("Key send started from pnum:" + pnum);
+        Socket sock;
+        PrintStream toServer;
+        // boolean representing whether a process has sent its key
+        sentKey = true;
+        try {
+            for (int i = 0; i < numberProcesses; i++) {
+                sock = new Socket(serverName, Ports.KeyServerPortBase + (i * 1000));
+                toServer = new PrintStream(sock.getOutputStream());
+
+                Process thisProcess = new Process(pnum, keyPair.getPublic().getEncoded(), Ports.KeyServerPortBase,
+                        serverName);
+                // Json string of this process
+                String thisProcessJsonString = new Gson().toJson(thisProcess);
+
+                // Send the process json string representing this blockchain process
+                toServer.println(thisProcessJsonString);
+                toServer.flush();
+                sock.close();
+            }
+        } catch (Exception x) {
+            x.printStackTrace();
+        }
+    }
+
+    // set the pnum based on argument input
+    public int readPNum(String args[]) {
+        if (args.length < 1)
+            return 0;
+        else if (args[0].equals("0"))
+            return 0;
+        else if (args[0].equals("1"))
+            return 1;
+        else if (args[0].equals("2"))
+            return 2;
+        else
+            return 0;
+    }
+
+    // get the input file name based on pnum of process
+    public String getFileName() {
+        switch (pnum) {
+        case 1:
+            return "BlockInput1.txt";
+        case 2:
+            return "BlockInput2.txt";
+        default:
+            return "BlockInput0.txt";
+        }
+    }
+
+    // returns a linked list of blockrecords read from file
+    public LinkedList<BlockRecord> getUnverifiedBlocks() {
+        String fileName = getFileName();
+        System.out.println("Using input file: " + fileName);
+        LinkedList<BlockRecord> recordList = new LinkedList<BlockRecord>();
+        try {
+            BufferedReader br = new BufferedReader(new FileReader(fileName));
+            String[] tokens = new String[10];
+            String InputLineStr;
+            String suuid;
+
+            int n = 0;
+
+            while ((InputLineStr = br.readLine()) != null) {
+                // BlockRecord that will be populated with file data
+                BlockRecord BR = new BlockRecord();
+
+                try {
+                    Thread.sleep(1001);
+                } catch (InterruptedException e) {
+                }
+                // set the timestamp info
+                Date date = new Date();
+                String T1 = String.format("%1$s %2$tF.%2$tT", "", date);
+                String TimeStampString = T1 + "." + pnum;
+                BR.setTimeStamp(TimeStampString);
+
+                suuid = new String(UUID.randomUUID().toString());
+                BR.setBlockID(suuid);
+                // set the block info with info from file
+                tokens = InputLineStr.split(" +"); // Tokenize the input
+                BR.setFname(tokens[iFNAME]);
+                BR.setLname(tokens[iLNAME]);
+                BR.setSSNum(tokens[iSSNUM]);
+                BR.setDOB(tokens[iDOB]);
+                BR.setDiag(tokens[iDIAG]);
+                BR.setTreat(tokens[iTREAT]);
+                BR.setRx(tokens[iRX]);
+                BR.signBlockId(keyPair.getPrivate());
+
+                // which process made this block
+                BR.setSubmittingProcessID(pnum);
+
+                recordList.add(BR);
+                n++;
+            }
+            System.out.println(n + " records read." + "\n");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return recordList;
+    }
+
+}
+
+// Worker for thread that adds process information - how public keys for
+// processes are retrieved
+class PublicKeyWorker extends Thread {
+    Socket keySock;
+    Blockchain containerBlockchainProcess;
+
+    PublicKeyWorker(Socket s, Blockchain process) {
+        keySock = s;
+        containerBlockchainProcess = process;
+    }
+
+    public void run() {
+        try {
+            BufferedReader processIn = new BufferedReader(new InputStreamReader(keySock.getInputStream()));
+            // Json string representation of Process class
+            String stringProcess = processIn.readLine();
+            // convert the string json to Process class object
+            Process otherProcess = new Gson().fromJson(stringProcess, Process.class);
+
+            containerBlockchainProcess.addProcess(otherProcess);
+            keySock.close();
+            if (!containerBlockchainProcess.sentKey) {
+                // if the blockchain process has not sent its key send keys
+                // ie if 0 or 1 process it needs to send its key to every process
+                containerBlockchainProcess.KeySend();
+            }
+        } catch (Exception x) {
+            x.printStackTrace();
+        }
+    }
+}
+
+class PublicKeyServer implements Runnable {
+
+    // represents the Blockchain process that started up this PublicKeyServer
+    Blockchain containerBlockchainProcess;
+
+    PublicKeyServer(Blockchain kBlockchain) {
+        containerBlockchainProcess = kBlockchain;
+    }
+
+    public void run() {
+        int q_len = 6;
+        Socket keySock;
+        try {
+            ServerSocket servsock = new ServerSocket(Ports.KeyServerPort, q_len);
+            while (true) {
+                keySock = servsock.accept();
+
+                new PublicKeyWorker(keySock, containerBlockchainProcess).start();
+            }
+        } catch (IOException ioe) {
+            System.out.println(ioe);
+        }
+    }
+}
+
+// Class that represents what info gets stored about a blockchain process
+class Process implements Serializable {
+    int pnum;
+    byte[] publicKey;
+    int port;
+    String IPAddress;
+
+    Process(int pnumParam, byte[] publicKeyParam, int portParam, String ipAdressParam) {
+        this.pnum = pnumParam;
+        this.publicKey = publicKeyParam;
+        this.port = portParam;
+        this.IPAddress = ipAdressParam;
+    }
+
+    public void printInfo() {
+        System.out.println("pnum: " + pnum);
+        // System.out.println("Public key: " + publicKey);
+        System.out.println("port: " + port);
+        System.out.println("ipAddress: " + IPAddress);
+    }
+}
+
+// class that represents ports to listen on and send data to
+class Ports {
+    public static int KeyServerPortBase = 6050;
+    public static int UnverifiedBlockServerPortBase = 6051;
+    public static int BlockchainServerPortBase = 6052;
+
+    public static int KeyServerPort;
+    public static int UnverifiedBlockServerPort;
+    public static int BlockchainServerPort;
+
+    public void setPorts(int PID) {
+        KeyServerPort = KeyServerPortBase + (PID * 1000);
+        UnverifiedBlockServerPort = UnverifiedBlockServerPortBase + (PID * 1000);
+        BlockchainServerPort = BlockchainServerPortBase + (PID * 1000);
+    }
+}
+
+// class that represents the block record
+class BlockRecord implements Serializable {
+    /* Examples of block fields. You should pick, and justify, your own set: */
+    String BlockID;
+    byte[] SignedBlockID;
+    String TimeStamp;
+    int SubmittingProcessID;
+    int VerificationProcessID;
+    String PreviousHash; // We'll copy from previous block
+    UUID uuid; // Just to show how JSON marshals this binary data.
+    String Fname;
+    String Lname;
+    String SSNum;
+    String DOB;
+    String RandomSeed; // Our guess. Ultimately our winning guess.
+    String WinningHash;
+    String Diag;
+    String Treat;
+    String Rx;
+    int blockInteger;
+
+    /* Examples of accessors for the BlockRecord fields: */
+    public String getBlockID() {
+        return BlockID;
+    }
+
+    public void setBlockID(String BID) {
+        this.BlockID = BID;
+    }
+
+    public String getTimeStamp() {
+        return TimeStamp;
+    }
+
+    public void setTimeStamp(String TS) {
+        this.TimeStamp = TS;
+    }
+
+    public int getSubmittingProcessID() {
+        return SubmittingProcessID;
+    }
+
+    public void setSubmittingProcessID(int VID) {
+        this.SubmittingProcessID = VID;
+    }
+
+    public void setVerificationProcessID(int VerificationProcessID) {
+        this.VerificationProcessID = VerificationProcessID;
+    }
+
+    public int getVerificationProcessID() {
+        return VerificationProcessID;
+    }
+
+    public String getPreviousHash() {
+        return this.PreviousHash;
+    }
+
+    public void setPreviousHash(String PH) {
+        this.PreviousHash = PH;
+    }
+
+    public UUID getUUID() {
+        return uuid;
+    }
+
+    public void setUUID(UUID ud) {
+        this.uuid = ud;
+    }
+
+    public String getLname() {
+        return Lname;
+    }
+
+    public void setLname(String LN) {
+        this.Lname = LN;
+    }
+
+    public String getFname() {
+        return Fname;
+    }
+
+    public void setFname(String FN) {
+        this.Fname = FN;
+    }
+
+    public String getSSNum() {
+        return SSNum;
+    }
+
+    public void setSSNum(String SS) {
+        this.SSNum = SS;
+    }
+
+    public String getDOB() {
+        return DOB;
+    }
+
+    public void setDOB(String RS) {
+        this.DOB = RS;
+    }
+
+    public String getDiag() {
+        return Diag;
+    }
+
+    public void setDiag(String D) {
+        this.Diag = D;
+    }
+
+    public String getTreat() {
+        return Treat;
+    }
+
+    public void setTreat(String Tr) {
+        this.Treat = Tr;
+    }
+
+    public String getRx() {
+        return Rx;
+    }
+
+    public void setRx(String Rx) {
+        this.Rx = Rx;
+    }
+
+    public String getRandomSeed() {
+        return RandomSeed;
+    }
+
+    public void setRandomSeed(String RS) {
+        this.RandomSeed = RS;
+    }
+
+    public String getWinningHash() {
+        return WinningHash;
+    }
+
+    public void setWinningHash(String WH) {
+        this.WinningHash = WH;
+    }
+
+    public void signBlockId(PrivateKey key) throws Exception {
+        Signature signer = Signature.getInstance("SHA1withRSA");
+        signer.initSign(key);
+        signer.update(getBlockID().getBytes());
+        this.SignedBlockID = signer.sign();
+    }
+
+    public void print() {
+        System.out.println("Printing information for Blockrecord: ");
+        System.out.println("BlockId: " + BlockID);
+        System.out.println("SubmittingProcessID: " + SubmittingProcessID);
+        System.out.println("VerificationProcessID: " + VerificationProcessID);
+        System.out.println("Timestmap: " + TimeStamp);
+        System.out.println();
+    }
+
+    public int getBlockInteger() {
+        return blockInteger;
+    }
+
+    public void setBlockInteger(int blockInteger) {
+        this.blockInteger = blockInteger;
+    }
+
+    // return a string representing the block data
+    // will be hashed together with random seed as a guess
+    /*
+     * String Fname; String Lname; String SSNum; String DOB; String RandomSeed; //
+     * Our guess. Ultimately our winning guess. String WinningHash; String Diag;
+     * String Treat; String Rx;
+     */
+    public String getDataForValidation() {
+        // todo add the rest of the block data once sure this approach works
+        return BlockID + SubmittingProcessID + Fname + Lname + SSNum;
+    }
+
+}
+
+// block chain thread worker that adds verified blocks from other processes
+// to parent blockchain process
+class BlockchainWorker extends Thread {
+    Socket sock;
+    Blockchain blockchainProcess;
+
+    BlockchainWorker(Socket s, Blockchain blockChainProcess) {
+        sock = s;
+        this.blockchainProcess = blockChainProcess;
+    }
+
+    public void run() {
+        try {
+            BufferedReader verifiedBlockInput = new BufferedReader(new InputStreamReader(sock.getInputStream()));
+            // Json string representation of BlockRecord class for this verified block
+            String stringProcess = verifiedBlockInput.readLine();
+            // convert the string json to BlockRecord class object
+            BlockRecord BR = new Gson().fromJson(stringProcess, BlockRecord.class);
+
+            // check that block chain doesn't already contain block
+            if (!blockchainProcess.blockIsAlreadyInBlockchain(BR.BlockID)) {
+                System.out.println("Adding BlockId to blockchain: " + BR.BlockID);
+                blockchainProcess.blockchain.add(BR);
+                blockchainProcess.WriteBlockChainToFile();
+            }
+
+            sock.close();
+        } catch (Exception x) {
+            x.printStackTrace();
+        }
+    }
+}
+
+// socket listener for new verified blocks to add to blockchain
+class BlockchainServer implements Runnable {
+    Blockchain blockChainProcess;
+
+    BlockchainServer(Blockchain blockChainProcess) {
+        this.blockChainProcess = blockChainProcess;
+    }
+
+    public void run() {
+        int q_len = 6; /* Number of requests for OpSys to queue */
+        Socket sock;
+        try {
+            ServerSocket servsock = new ServerSocket(Ports.BlockchainServerPort, q_len);
+            while (true) {
+                sock = servsock.accept();
+                new BlockchainWorker(sock, blockChainProcess).start();
+            }
+        } catch (IOException ioe) {
+            System.out.println(ioe);
+        }
+    }
+}
+
+// listens for UnverifiedBlock connections from processes
+class UnverifiedBlockServer implements Runnable {
+    PriorityBlockingQueue<BlockRecord> queue;
+
+    UnverifiedBlockServer(PriorityBlockingQueue<BlockRecord> queue) {
+        this.queue = queue;
+    }
+
+    /*
+     * ServerSocket listener to spin off UnverifiedBlockWorker threads
+     */
+    public void run() {
+        int q_len = 6;
+        Socket sock;
+        System.out.println("Starting the Unverified Block Server input thread using "
+                + Integer.toString(Ports.UnverifiedBlockServerPort));
+        try {
+            ServerSocket UVBServer = new ServerSocket(Ports.UnverifiedBlockServerPort, q_len);
+            while (true) {
+                sock = UVBServer.accept(); // Got a new unverified block
+                // System.out.println("Got connection to UVB Server.");
+                new UnverifiedBlockWorker(sock, queue).start(); // So start a thread to process it.
+            }
+        } catch (IOException ioe) {
+            System.out.println(ioe);
+        }
+    }
+}
+
+class UnverifiedBlockWorker extends Thread {
+    Socket sock;
+    PriorityBlockingQueue<BlockRecord> queue;
+
+    UnverifiedBlockWorker(Socket s, PriorityBlockingQueue<BlockRecord> queue) {
+        sock = s;
+        this.queue = queue;
+    }
+
+    public void run() {
+        try {
+
+            BufferedReader unverifiedBlockInput = new BufferedReader(new InputStreamReader(sock.getInputStream()));
+            // Json string representation of BlockRecord class for this unverified block
+            String stringProcess = unverifiedBlockInput.readLine();
+            // convert the string json to BlockRecord class object
+            BlockRecord BR = new Gson().fromJson(stringProcess, BlockRecord.class);
+            System.out
+                    .println("Read in block id: " + BR.getBlockID() + " from process: " + BR.getSubmittingProcessID());
+            queue.put(BR);
+            sock.close();
+        } catch (Exception x) {
+            x.printStackTrace();
+        }
+    }
+}
+
+class VerifyBlockWorker implements Runnable {
+
+    Blockchain parentProcess;
+
+    // the work number the first 4 digits of the hash have to be less than
+    // lower it it increase difficulty of the hash
+    int winningNumber = 10000;
+
+    VerifyBlockWorker(Blockchain parentProcess) {
+        this.parentProcess = parentProcess;
+    }
+
+    public static String randomAlphaNumeric(int count) {
+        StringBuilder builder = new StringBuilder();
+        while (count-- != 0) {
+            int character = (int) (Math.random() * "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".length());
+            builder.append("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".charAt(character));
+        }
+        return builder.toString();
+    }
+
+    // sleeps between 0-3 seconds
+    public void randomSleep() throws Exception {
+        Thread.sleep((new Random().nextInt(3) * 1000));
+    }
+
+    // convert byte array to string
+    public static String ByteArrayToString(byte[] ba) {
+        StringBuilder hex = new StringBuilder(ba.length * 2);
+        for (int i = 0; i < ba.length; i++) {
+            hex.append(String.format("%02X", ba[i]));
+        }
+        return hex.toString();
+    }
+
+    public void run() {
+        System.out.println("Run called, size of unverified block queue: " + parentProcess.unverifiedBlockQueue.size());
+        while (true) {
+            if (!parentProcess.unverifiedBlockQueue.isEmpty()) {
+                try {
+                    // pop the unverified block
+                    BlockRecord ub = parentProcess.unverifiedBlockQueue.poll();
+                    // System.out.println("Popped block: " + ub.BlockID + "pnum: " +
+                    // ub.SubmittingProcessID);
+
+                    // if block already got added to block chain
+                    // skip this iteration
+                    if (parentProcess.blockIsAlreadyInBlockchain(ub.BlockID)) {
+                        System.out.println("Block: " + ub.BlockID + " was already in blockchain, discarding it");
+                        continue;
+                    }
+
+                    if (!parentProcess.verifyUnverifiedBlockSignature(ub)) {
+                        System.out.println(
+                                "Could not verify signature of unverified block: " + ub.BlockID + ", discarding it");
+                        continue;
+                    }
+
+                    // work loop - will exit out as needed
+                    while (true) {
+                        // todo probably make this every three hash guesses or something
+                        if (parentProcess.blockIsAlreadyInBlockchain(ub.BlockID)) {
+                            break;
+                        }
+                        randomSleep();
+                        // randSeed guess
+                        String randString = randomAlphaNumeric(8);
+                        // data for the block
+                        String blockData = ub.getDataForValidation();
+
+                        String previousHash = parentProcess.blockchain.getLast().getWinningHash();
+
+                        // data that will be hashed
+                        String concatDataForHash = previousHash + blockData + randString;
+
+                        MessageDigest MD = MessageDigest.getInstance("SHA-256");
+                        byte[] bytesHash = MD.digest(concatDataForHash.getBytes("UTF-8"));
+
+                        String stringHash = ByteArrayToString(bytesHash);
+                        // first 4 digits of the hash
+                        int intHash = Integer.parseInt(stringHash.substring(0, 4), 16);
+                        System.out.println("intHash: " + intHash);
+
+                        if (intHash < winningNumber) {
+                            System.out.println("Winning hash: " + stringHash);
+                            ub.setVerificationProcessID(parentProcess.pnum);
+                            ub.setWinningHash(stringHash);
+
+                            // set previous hash... careful that blockchain is updated here
+                            ub.setPreviousHash(parentProcess.blockchain.getLast().getWinningHash());
+                            ub.setBlockInteger(parentProcess.blockchain.getLast().getBlockInteger() + 1);
+                            ub.setRandomSeed(randString);
+                            break;
+                        }
+                    }
+
+                    // check that block is from a valid process
+                    if (!parentProcess.verifyUnverifiedBlockSignature(ub)) {
+                        System.out.println("Could not verify signature of block: " + ub.BlockID + " from process: "
+                                + ub.SubmittingProcessID);
+                        continue;
+                    }
+                    // if at this point ub is verified block now
+                    parentProcess.sendVerifiedBlocks(ub);
+
+                } catch (Exception x) {
+                    x.printStackTrace();
+                    continue;
+                }
+
+            }
+        }
+    }
+}
+[
+  {
+    "BlockID": "genesisBlock",
+    "SubmittingProcessID": 0,
+    "VerificationProcessID": 0,
+    "WinningHash": "000000000",
+    "blockInteger": 0
+  },
+  {
+    "BlockID": "b78a185b-e792-4f7a-baf9-c75bd44257b7",
+    "SignedBlockID": [
+      72,
+      45,
+      -70,
+      -123,
+      -96,
+      80,
+      -125,
+      -49,
+      30,
+      56,
+      110,
+      -59,
+      -59,
+      64,
+      -68,
+      57,
+      113,
+      19,
+      20,
+      5,
+      77,
+      -19,
+      -41,
+      70,
+      -11,
+      112,
+      19,
+      -72,
+      -44,
+      -78,
+      3,
+      -26,
+      -108,
+      -75,
+      -21,
+      -29,
+      -107,
+      66,
+      17,
+      -115,
+      113,
+      67,
+      64,
+      69,
+      21,
+      52,
+      -117,
+      14,
+      49,
+      47,
+      96,
+      -65,
+      -52,
+      -56,
+      -109,
+      -20,
+      -114,
+      -89,
+      -10,
+      95,
+      -126,
+      -41,
+      -54,
+      -75,
+      51,
+      42,
+      71,
+      -45,
+      -86,
+      44,
+      30,
+      -43,
+      75,
+      88,
+      -84,
+      -85,
+      7,
+      -35,
+      -95,
+      -100,
+      91,
+      -88,
+      42,
+      125,
+      6,
+      -76,
+      -6,
+      -94,
+      106,
+      -104,
+      59,
+      -44,
+      -75,
+      87,
+      -63,
+      -60,
+      -113,
+      112,
+      4,
+      7,
+      47,
+      19,
+      -41,
+      109,
+      -1,
+      2,
+      -8,
+      -89,
+      -32,
+      96,
+      -8,
+      -55,
+      -55,
+      -22,
+      -77,
+      124,
+      63,
+      -1,
+      -19,
+      -52,
+      -100,
+      22,
+      -114,
+      -7,
+      -7,
+      85,
+      -27,
+      -124
+    ],
+    "TimeStamp": " 2021-11-03.17:28:12.1",
+    "SubmittingProcessID": 1,
+    "VerificationProcessID": 0,
+    "PreviousHash": "000000000",
+    "Fname": "Rita",
+    "Lname": "Vita",
+    "SSNum": "999-456-789",
+    "DOB": "1992.01.31",
+    "RandomSeed": "FQL0LHOY",
+    "WinningHash": "195C8C8180BF03043E394D129B1EC156C3A365034D13E686EA1287C4267800BF",
+    "Diag": "ObessivePersonality",
+    "Treat": "TryToRelax",
+    "Rx": "Ibuprofen",
+    "blockInteger": 1
+  },
+  {
+    "BlockID": "cd33add3-d1b3-480e-b113-94fe2c58834c",
+    "SignedBlockID": [
+      96,
+      93,
+      -15,
+      -43,
+      58,
+      86,
+      120,
+      36,
+      43,
+      -70,
+      28,
+      -50,
+      -37,
+      36,
+      24,
+      40,
+      111,
+      8,
+      -33,
+      61,
+      -124,
+      -51,
+      110,
+      25,
+      112,
+      -107,
+      -43,
+      76,
+      -90,
+      -29,
+      18,
+      20,
+      27,
+      -118,
+      41,
+      36,
+      -105,
+      -90,
+      39,
+      50,
+      -1,
+      106,
+      92,
+      -56,
+      -24,
+      57,
+      68,
+      -58,
+      68,
+      -83,
+      -30,
+      -25,
+      4,
+      -101,
+      -98,
+      47,
+      121,
+      -41,
+      -123,
+      116,
+      46,
+      -1,
+      -121,
+      -66,
+      -2,
+      -105,
+      -49,
+      119,
+      17,
+      68,
+      98,
+      127,
+      49,
+      -55,
+      95,
+      80,
+      -118,
+      -2,
+      28,
+      -13,
+      -12,
+      -3,
+      14,
+      65,
+      72,
+      35,
+      77,
+      -67,
+      7,
+      -55,
+      87,
+      8,
+      122,
+      21,
+      115,
+      32,
+      -64,
+      95,
+      -96,
+      -11,
+      6,
+      -27,
+      127,
+      16,
+      84,
+      48,
+      -23,
+      -76,
+      30,
+      68,
+      -92,
+      22,
+      36,
+      37,
+      -94,
+      103,
+      -2,
+      23,
+      -93,
+      -63,
+      -127,
+      41,
+      109,
+      24,
+      77,
+      -118,
+      -81,
+      -22
+    ],
+    "TimeStamp": " 2021-11-03.17:28:13.1",
+    "SubmittingProcessID": 1,
+    "VerificationProcessID": 0,
+    "PreviousHash": "195C8C8180BF03043E394D129B1EC156C3A365034D13E686EA1287C4267800BF",
+    "Fname": "Wei",
+    "Lname": "Xu",
+    "SSNum": "123-456-333",
+    "DOB": "1996.03.22",
+    "RandomSeed": "HGMATRBN",
+    "WinningHash": "1FEE9EE75C504E19831636EBB942785CFB449F6478E3954067E20DAFD9258E52",
+    "Diag": "Shingles",
+    "Treat": "WaitForRelief",
+    "Rx": "Zovirax",
+    "blockInteger": 2
+  },
+  {
+    "BlockID": "1d91571d-f9e4-4960-8b4a-1908cfc3c65c",
+    "SignedBlockID": [
+      82,
+      104,
+      98,
+      127,
+      29,
+      62,
+      -29,
+      -57,
+      -78,
+      -96,
+      47,
+      -32,
+      51,
+      95,
+      73,
+      79,
+      66,
+      -101,
+      -8,
+      -49,
+      -104,
+      28,
+      -12,
+      92,
+      -41,
+      32,
+      71,
+      32,
+      -59,
+      -43,
+      31,
+      -12,
+      6,
+      8,
+      -62,
+      -43,
+      94,
+      -127,
+      -128,
+      16,
+      70,
+      8,
+      -4,
+      5,
+      -50,
+      95,
+      25,
+      -49,
+      -90,
+      74,
+      -56,
+      73,
+      -121,
+      -43,
+      52,
+      -16,
+      -113,
+      47,
+      93,
+      -3,
+      -115,
+      15,
+      -88,
+      42,
+      -26,
+      40,
+      -73,
+      54,
+      122,
+      9,
+      18,
+      77,
+      105,
+      -41,
+      -22,
+      100,
+      87,
+      124,
+      67,
+      79,
+      -81,
+      59,
+      91,
+      107,
+      -8,
+      -45,
+      -82,
+      -96,
+      -68,
+      34,
+      122,
+      -81,
+      118,
+      -113,
+      -100,
+      -57,
+      -96,
+      33,
+      61,
+      27,
+      -93,
+      -4,
+      31,
+      -52,
+      41,
+      95,
+      31,
+      -104,
+      -1,
+      -120,
+      -103,
+      -65,
+      -13,
+      -17,
+      57,
+      -24,
+      -30,
+      54,
+      30,
+      -48,
+      88,
+      73,
+      -59,
+      33,
+      -62,
+      -94,
+      11,
+      -92
+    ],
+    "TimeStamp": " 2021-11-03.17:28:14.0",
+    "SubmittingProcessID": 0,
+    "VerificationProcessID": 0,
+    "PreviousHash": "1FEE9EE75C504E19831636EBB942785CFB449F6478E3954067E20DAFD9258E52",
+    "Fname": "John",
+    "Lname": "Smith",
+    "SSNum": "123-45-6789",
+    "DOB": "1996.03.07",
+    "RandomSeed": "JV3ULUCA",
+    "WinningHash": "0EFC204B224EF321C207507DD53990C68143AA2F2DBC38010C03BE737A6244DB",
+    "Diag": "Chickenpox",
+    "Treat": "BedRest",
+    "Rx": "aspirin",
+    "blockInteger": 3
+  },
+  {
+    "BlockID": "a66e513b-4c53-4943-a398-db208d7fab46",
+    "SignedBlockID": [
+      84,
+      -110,
+      -70,
+      -29,
+      54,
+      124,
+      -125,
+      70,
+      6,
+      -34,
+      -31,
+      -97,
+      64,
+      82,
+      39,
+      -29,
+      79,
+      -119,
+      -105,
+      -64,
+      26,
+      -67,
+      125,
+      52,
+      33,
+      38,
+      -36,
+      -15,
+      70,
+      -128,
+      -83,
+      -83,
+      -62,
+      113,
+      91,
+      -91,
+      -47,
+      -107,
+      4,
+      59,
+      -59,
+      -95,
+      123,
+      109,
+      102,
+      14,
+      -84,
+      -78,
+      -21,
+      34,
+      -97,
+      101,
+      33,
+      63,
+      64,
+      58,
+      -10,
+      -29,
+      100,
+      10,
+      36,
+      42,
+      -10,
+      -96,
+      -1,
+      -45,
+      -37,
+      -110,
+      -102,
+      44,
+      61,
+      -78,
+      -67,
+      57,
+      -94,
+      -51,
+      -118,
+      51,
+      97,
+      10,
+      12,
+      -110,
+      -82,
+      0,
+      -52,
+      83,
+      120,
+      -75,
+      -70,
+      65,
+      -64,
+      -21,
+      29,
+      -7,
+      -107,
+      -61,
+      8,
+      -119,
+      2,
+      67,
+      -121,
+      -66,
+      -92,
+      68,
+      -121,
+      54,
+      53,
+      69,
+      43,
+      -125,
+      -119,
+      -109,
+      17,
+      21,
+      -30,
+      103,
+      73,
+      -126,
+      35,
+      9,
+      10,
+      102,
+      -59,
+      -39,
+      -6,
+      127,
+      -38,
+      -54
+    ],
+    "TimeStamp": " 2021-11-03.17:28:14.1",
+    "SubmittingProcessID": 1,
+    "VerificationProcessID": 2,
+    "PreviousHash": "0EFC204B224EF321C207507DD53990C68143AA2F2DBC38010C03BE737A6244DB",
+    "Fname": "Sally",
+    "Lname": "McCutty",
+    "SSNum": "123-456-999",
+    "DOB": "1970.01.01",
+    "RandomSeed": "OO2QITYK",
+    "WinningHash": "13584C0000310EA8D94D5067D7EB6F8DC06707FF71508A2D96FEC027407BF69D",
+    "Diag": "Migraine",
+    "Treat": "IcePack",
+    "Rx": "Almotriptan",
+    "blockInteger": 4
+  },
+  {
+    "BlockID": "f41541f0-f0b4-4d33-afcf-268562c3b122",
+    "SignedBlockID": [
+      21,
+      -16,
+      -59,
+      -28,
+      -73,
+      71,
+      -78,
+      85,
+      27,
+      1,
+      7,
+      121,
+      94,
+      28,
+      74,
+      25,
+      -97,
+      39,
+      98,
+      -106,
+      -28,
+      44,
+      56,
+      46,
+      -7,
+      -35,
+      100,
+      -114,
+      -90,
+      -45,
+      -48,
+      103,
+      53,
+      -10,
+      90,
+      121,
+      -11,
+      88,
+      86,
+      -11,
+      5,
+      29,
+      -20,
+      -64,
+      -107,
+      64,
+      -78,
+      23,
+      103,
+      66,
+      -2,
+      -51,
+      -93,
+      -76,
+      45,
+      76,
+      -53,
+      50,
+      -38,
+      -34,
+      -54,
+      54,
+      66,
+      62,
+      5,
+      -104,
+      -122,
+      106,
+      -118,
+      -15,
+      21,
+      74,
+      120,
+      -88,
+      -35,
+      -127,
+      117,
+      21,
+      -76,
+      -74,
+      -58,
+      35,
+      -51,
+      -108,
+      30,
+      87,
+      -19,
+      44,
+      -2,
+      113,
+      24,
+      -122,
+      -64,
+      50,
+      -96,
+      -114,
+      54,
+      -46,
+      56,
+      8,
+      -91,
+      29,
+      -113,
+      104,
+      65,
+      50,
+      -62,
+      98,
+      -104,
+      -92,
+      11,
+      -31,
+      115,
+      -102,
+      42,
+      76,
+      104,
+      -95,
+      -72,
+      -33,
+      -116,
+      -74,
+      -116,
+      -92,
+      46,
+      -107,
+      -107,
+      17
+    ],
+    "TimeStamp": " 2021-11-03.17:28:14.2",
+    "SubmittingProcessID": 2,
+    "VerificationProcessID": 2,
+    "PreviousHash": "13584C0000310EA8D94D5067D7EB6F8DC06707FF71508A2D96FEC027407BF69D",
+    "Fname": "Helen",
+    "Lname": "Keller",
+    "SSNum": "666-45-6789",
+    "DOB": "1880.06.27",
+    "RandomSeed": "FDEC8FNG",
+    "WinningHash": "160D6F43793B25A85BA00B77D09CA96767663BCA43FF8AFC287422B49F203A01",
+    "Diag": "Arthritis",
+    "Treat": "WarmCloths",
+    "Rx": "Aspirin",
+    "blockInteger": 5
+  },
+  {
+    "BlockID": "382e5518-f74a-4cca-abff-7fe8055ed290",
+    "SignedBlockID": [
+      92,
+      30,
+      36,
+      -104,
+      -33,
+      -89,
+      113,
+      -32,
+      -66,
+      75,
+      49,
+      105,
+      -120,
+      -20,
+      -95,
+      -54,
+      -66,
+      -109,
+      -104,
+      -22,
+      -19,
+      -115,
+      92,
+      14,
+      -101,
+      -91,
+      -94,
+      26,
+      4,
+      -68,
+      9,
+      -76,
+      37,
+      -24,
+      -117,
+      60,
+      66,
+      -43,
+      1,
+      24,
+      59,
+      71,
+      -97,
+      -120,
+      121,
+      -39,
+      -59,
+      -42,
+      -89,
+      -76,
+      -122,
+      23,
+      16,
+      -66,
+      84,
+      -35,
+      26,
+      -118,
+      90,
+      -108,
+      -70,
+      -89,
+      96,
+      79,
+      126,
+      -6,
+      -93,
+      -107,
+      53,
+      11,
+      23,
+      15,
+      -50,
+      26,
+      -113,
+      -128,
+      79,
+      -69,
+      39,
+      57,
+      1,
+      51,
+      68,
+      -96,
+      6,
+      31,
+      -66,
+      19,
+      -86,
+      -21,
+      -81,
+      113,
+      -45,
+      31,
+      26,
+      -34,
+      40,
+      0,
+      41,
+      -18,
+      99,
+      -74,
+      -33,
+      -106,
+      11,
+      47,
+      -112,
+      51,
+      -116,
+      -10,
+      38,
+      -98,
+      59,
+      -120,
+      -26,
+      101,
+      16,
+      -76,
+      -5,
+      -72,
+      -9,
+      22,
+      -37,
+      -23,
+      -25,
+      10,
+      -36,
+      90
+    ],
+    "TimeStamp": " 2021-11-03.17:28:15.0",
+    "SubmittingProcessID": 0,
+    "VerificationProcessID": 1,
+    "PreviousHash": "160D6F43793B25A85BA00B77D09CA96767663BCA43FF8AFC287422B49F203A01",
+    "Fname": "Joe",
+    "Lname": "Blow",
+    "SSNum": "123-45-6888",
+    "DOB": "1996.03.07",
+    "RandomSeed": "NGH1XNNU",
+    "WinningHash": "225EE6D404184F5DDCA4ECBAF7FEAB19A337D94687050200710DCA0B498CE8B9",
+    "Diag": "Smallpox",
+    "Treat": "BedRest",
+    "Rx": "Whiskey",
+    "blockInteger": 6
+  },
+  {
+    "BlockID": "0363cc53-4fb2-4cb6-bfe5-b8a09ab6e85c",
+    "SignedBlockID": [
+      11,
+      -7,
+      -36,
+      102,
+      2,
+      -18,
+      21,
+      113,
+      98,
+      1,
+      55,
+      -102,
+      22,
+      -43,
+      79,
+      56,
+      35,
+      -114,
+      -23,
+      85,
+      -73,
+      -53,
+      -37,
+      28,
+      101,
+      104,
+      62,
+      -11,
+      7,
+      11,
+      49,
+      -95,
+      -50,
+      58,
+      -79,
+      -112,
+      115,
+      16,
+      -83,
+      -57,
+      -29,
+      68,
+      -12,
+      60,
+      121,
+      11,
+      -12,
+      54,
+      50,
+      -6,
+      42,
+      36,
+      126,
+      -32,
+      82,
+      -82,
+      -54,
+      -117,
+      64,
+      118,
+      90,
+      -101,
+      37,
+      63,
+      117,
+      -113,
+      58,
+      44,
+      63,
+      90,
+      -84,
+      -97,
+      -126,
+      -67,
+      114,
+      125,
+      126,
+      -88,
+      -71,
+      -84,
+      -98,
+      -127,
+      -99,
+      115,
+      109,
+      6,
+      -59,
+      -6,
+      -75,
+      -15,
+      100,
+      -71,
+      10,
+      -85,
+      110,
+      20,
+      -98,
+      63,
+      -52,
+      43,
+      37,
+      100,
+      36,
+      10,
+      -22,
+      -119,
+      -100,
+      -48,
+      121,
+      -100,
+      -96,
+      -37,
+      8,
+      -75,
+      -89,
+      46,
+      86,
+      -108,
+      9,
+      124,
+      -84,
+      -15,
+      -15,
+      18,
+      30,
+      -44,
+      -113,
+      14
+    ],
+    "TimeStamp": " 2021-11-03.17:28:15.1",
+    "SubmittingProcessID": 1,
+    "VerificationProcessID": 0,
+    "PreviousHash": "225EE6D404184F5DDCA4ECBAF7FEAB19A337D94687050200710DCA0B498CE8B9",
+    "Fname": "Bruce",
+    "Lname": "Lee",
+    "SSNum": "456-789-123",
+    "DOB": "1940.11.27",
+    "RandomSeed": "4CTVGU24",
+    "WinningHash": "15E208422C5A2D0F471BE25C4E3039170CF3D205260F20AAD1D670E7AF1F0141",
+    "Diag": "SoreStomach",
+    "Treat": "LessCombat",
+    "Rx": "Vicodine",
+    "blockInteger": 7
+  },
+  {
+    "BlockID": "6a533f8f-7bf2-4e34-a1a5-96a87630df76",
+    "SignedBlockID": [
+      86,
+      -105,
+      62,
+      -24,
+      86,
+      -58,
+      54,
+      83,
+      51,
+      -74,
+      44,
+      21,
+      20,
+      -76,
+      69,
+      66,
+      -50,
+      -67,
+      -54,
+      115,
+      96,
+      -61,
+      -87,
+      -111,
+      13,
+      -78,
+      -59,
+      -18,
+      13,
+      -98,
+      108,
+      -91,
+      81,
+      125,
+      -32,
+      -105,
+      -33,
+      10,
+      -90,
+      -109,
+      45,
+      15,
+      -94,
+      34,
+      -123,
+      -53,
+      -32,
+      -36,
+      -10,
+      -16,
+      -2,
+      102,
+      -128,
+      88,
+      -87,
+      -107,
+      92,
+      -43,
+      70,
+      -79,
+      35,
+      108,
+      51,
+      86,
+      -73,
+      51,
+      -99,
+      108,
+      95,
+      53,
+      116,
+      -51,
+      79,
+      40,
+      116,
+      6,
+      30,
+      84,
+      127,
+      38,
+      69,
+      -59,
+      -47,
+      7,
+      20,
+      66,
+      101,
+      16,
+      93,
+      -76,
+      -52,
+      11,
+      100,
+      -66,
+      13,
+      53,
+      5,
+      71,
+      -4,
+      42,
+      106,
+      -43,
+      6,
+      74,
+      -10,
+      -104,
+      32,
+      -35,
+      -107,
+      103,
+      -18,
+      -125,
+      -56,
+      113,
+      -4,
+      -113,
+      12,
+      -97,
+      50,
+      28,
+      61,
+      49,
+      72,
+      32,
+      48,
+      73,
+      64,
+      109
+    ],
+    "TimeStamp": " 2021-11-03.17:28:15.2",
+    "SubmittingProcessID": 2,
+    "VerificationProcessID": 2,
+    "PreviousHash": "15E208422C5A2D0F471BE25C4E3039170CF3D205260F20AAD1D670E7AF1F0141",
+    "Fname": "Abraham",
+    "Lname": "Lincoln",
+    "SSNum": "444-45-6888",
+    "DOB": "1809.02.12",
+    "RandomSeed": "XNOHWSKA",
+    "WinningHash": "25A70A68B77DE6DA1E0A681D4A4A9586DD3F7519EE683CA8D59CA755EAD6BD4A",
+    "Diag": "GreviousWound",
+    "Treat": "Surgery",
+    "Rx": "Whiskey",
+    "blockInteger": 8
+  },
+  {
+    "BlockID": "22b6cc85-d7eb-43cd-8d86-6a4680fcb60a",
+    "SignedBlockID": [
+      -106,
+      87,
+      -55,
+      20,
+      127,
+      89,
+      93,
+      -110,
+      74,
+      70,
+      -85,
+      23,
+      -28,
+      -90,
+      -89,
+      24,
+      -21,
+      48,
+      36,
+      -71,
+      -2,
+      -18,
+      -100,
+      -2,
+      -13,
+      36,
+      49,
+      26,
+      -82,
+      44,
+      1,
+      -15,
+      42,
+      121,
+      76,
+      -64,
+      -32,
+      106,
+      -79,
+      54,
+      -41,
+      -47,
+      -102,
+      68,
+      -95,
+      6,
+      32,
+      -63,
+      -30,
+      -8,
+      63,
+      -103,
+      109,
+      85,
+      62,
+      -109,
+      18,
+      -40,
+      4,
+      110,
+      -90,
+      48,
+      51,
+      -56,
+      107,
+      119,
+      78,
+      -73,
+      36,
+      110,
+      37,
+      -92,
+      31,
+      -106,
+      27,
+      12,
+      121,
+      -51,
+      -92,
+      111,
+      22,
+      -7,
+      24,
+      55,
+      76,
+      27,
+      -8,
+      122,
+      -87,
+      -29,
+      -119,
+      107,
+      -61,
+      58,
+      59,
+      4,
+      -57,
+      -106,
+      -93,
+      -70,
+      96,
+      77,
+      106,
+      -25,
+      43,
+      32,
+      66,
+      -44,
+      -36,
+      21,
+      -109,
+      -96,
+      23,
+      17,
+      123,
+      1,
+      -64,
+      -26,
+      13,
+      97,
+      8,
+      20,
+      10,
+      -114,
+      123,
+      105,
+      -101,
+      -42
+    ],
+    "TimeStamp": " 2021-11-03.17:28:16.0",
+    "SubmittingProcessID": 0,
+    "VerificationProcessID": 2,
+    "PreviousHash": "25A70A68B77DE6DA1E0A681D4A4A9586DD3F7519EE683CA8D59CA755EAD6BD4A",
+    "Fname": "Julie",
+    "Lname": "Wilson",
+    "SSNum": "123-45-6999",
+    "DOB": "1996.03.07",
+    "RandomSeed": "6HL03R0N",
+    "WinningHash": "260AF9357419CFD9D149055DA3B28B5DE0885A02D4A9F9FAB77448A6ED490C4C",
+    "Diag": "Insomnia",
+    "Treat": "Exercise",
+    "Rx": "HotPeppers",
+    "blockInteger": 9
+  },
+  {
+    "BlockID": "400fd3a8-4239-4b26-ad26-0535cb45f270",
+    "SignedBlockID": [
+      77,
+      103,
+      -27,
+      11,
+      74,
+      66,
+      -37,
+      -88,
+      -73,
+      -18,
+      -59,
+      6,
+      -43,
+      52,
+      -86,
+      -112,
+      -120,
+      19,
+      49,
+      35,
+      -56,
+      25,
+      -33,
+      -30,
+      5,
+      66,
+      -7,
+      106,
+      -13,
+      -107,
+      -69,
+      -52,
+      -72,
+      -15,
+      125,
+      121,
+      7,
+      34,
+      55,
+      -50,
+      17,
+      -51,
+      31,
+      -106,
+      53,
+      72,
+      -31,
+      -78,
+      -91,
+      -60,
+      -127,
+      -35,
+      -34,
+      44,
+      27,
+      -111,
+      -76,
+      -5,
+      18,
+      -37,
+      61,
+      -114,
+      -93,
+      63,
+      -88,
+      65,
+      -97,
+      -33,
+      -33,
+      -50,
+      -100,
+      -101,
+      -126,
+      -87,
+      56,
+      53,
+      -66,
+      -88,
+      -36,
+      34,
+      23,
+      -96,
+      -120,
+      -42,
+      -62,
+      -68,
+      41,
+      -108,
+      -83,
+      0,
+      -90,
+      -11,
+      -58,
+      -21,
+      -103,
+      115,
+      -37,
+      89,
+      62,
+      -54,
+      50,
+      124,
+      -2,
+      65,
+      72,
+      -23,
+      92,
+      -64,
+      72,
+      -115,
+      -120,
+      -84,
+      -33,
+      20,
+      -21,
+      -25,
+      4,
+      39,
+      -16,
+      1,
+      -50,
+      -56,
+      -123,
+      -27,
+      2,
+      9,
+      -63,
+      102
+    ],
+    "TimeStamp": " 2021-11-03.17:28:16.2",
+    "SubmittingProcessID": 2,
+    "VerificationProcessID": 1,
+    "PreviousHash": "260AF9357419CFD9D149055DA3B28B5DE0885A02D4A9F9FAB77448A6ED490C4C",
+    "Fname": "John",
+    "Lname": "Kennedy",
+    "SSNum": "333-45-6999",
+    "DOB": "1917.05.29",
+    "RandomSeed": "B2G480ZY",
+    "WinningHash": "240E427C6EA55D2F48210B923D19BD8908664328ADE0D46CAE52E361FEF2CEC0",
+    "Diag": "AddisonsDisease",
+    "Treat": "DrugTherapy",
+    "Rx": "Steroids",
+    "blockInteger": 10
+  },
+  {
+    "BlockID": "e0990a64-d977-42a6-8fb2-6ff2ec26c388",
+    "SignedBlockID": [
+      4,
+      75,
+      121,
+      64,
+      45,
+      -1,
+      71,
+      86,
+      -54,
+      -45,
+      106,
+      -49,
+      -54,
+      85,
+      80,
+      -46,
+      94,
+      19,
+      101,
+      -53,
+      -6,
+      24,
+      -108,
+      -121,
+      105,
+      122,
+      -28,
+      8,
+      -109,
+      -38,
+      -32,
+      33,
+      -10,
+      91,
+      23,
+      -78,
+      -55,
+      51,
+      51,
+      3,
+      -55,
+      1,
+      103,
+      -118,
+      97,
+      122,
+      30,
+      -49,
+      -77,
+      -70,
+      33,
+      -47,
+      123,
+      -37,
+      -3,
+      -125,
+      24,
+      -66,
+      -76,
+      45,
+      -63,
+      18,
+      -22,
+      76,
+      72,
+      71,
+      75,
+      -101,
+      -72,
+      -20,
+      105,
+      -94,
+      62,
+      78,
+      -110,
+      45,
+      -114,
+      -100,
+      -46,
+      -24,
+      -29,
+      87,
+      110,
+      63,
+      123,
+      8,
+      -106,
+      -47,
+      -87,
+      22,
+      120,
+      -40,
+      -85,
+      -117,
+      -103,
+      56,
+      -27,
+      43,
+      37,
+      -89,
+      -27,
+      -78,
+      -34,
+      -38,
+      122,
+      -21,
+      -11,
+      118,
+      29,
+      0,
+      71,
+      47,
+      127,
+      -7,
+      69,
+      -73,
+      79,
+      -24,
+      -82,
+      -16,
+      43,
+      101,
+      -74,
+      102,
+      0,
+      10,
+      -17,
+      -6
+    ],
+    "TimeStamp": " 2021-11-03.17:28:17.0",
+    "SubmittingProcessID": 0,
+    "VerificationProcessID": 0,
+    "PreviousHash": "240E427C6EA55D2F48210B923D19BD8908664328ADE0D46CAE52E361FEF2CEC0",
+    "Fname": "Wayne",
+    "Lname": "Blaine",
+    "SSNum": "123-45-6777",
+    "DOB": "1942.07.07",
+    "RandomSeed": "X2EAGU8Z",
+    "WinningHash": "08210063F425A36E8F27B483950CF47CEBEC10E1505CDC25FF264E4509B1D449",
+    "Diag": "Measles",
+    "Treat": "WaitToGetBetter",
+    "Rx": "CodLiverOil",
+    "blockInteger": 11
+  },
+  {
+    "BlockID": "01f1c5e2-c120-49cf-bb21-526e5f56d94f",
+    "SignedBlockID": [
+      0,
+      30,
+      56,
+      80,
+      -27,
+      106,
+      -101,
+      125,
+      0,
+      -84,
+      102,
+      -72,
+      118,
+      64,
+      -24,
+      -90,
+      -63,
+      -52,
+      58,
+      -107,
+      -91,
+      102,
+      87,
+      103,
+      67,
+      -121,
+      -49,
+      -43,
+      -9,
+      -20,
+      11,
+      -89,
+      -88,
+      -49,
+      78,
+      83,
+      34,
+      112,
+      109,
+      85,
+      -45,
+      -12,
+      66,
+      -41,
+      73,
+      -115,
+      22,
+      100,
+      89,
+      -96,
+      9,
+      -45,
+      24,
+      -76,
+      15,
+      -53,
+      58,
+      77,
+      -20,
+      -101,
+      10,
+      -97,
+      -77,
+      -81,
+      -13,
+      -56,
+      -30,
+      -103,
+      -121,
+      -53,
+      37,
+      -70,
+      -79,
+      -5,
+      -91,
+      66,
+      115,
+      -117,
+      103,
+      54,
+      -56,
+      -57,
+      50,
+      110,
+      -9,
+      124,
+      123,
+      21,
+      93,
+      -9,
+      -93,
+      42,
+      42,
+      -107,
+      40,
+      -36,
+      31,
+      -96,
+      -90,
+      -115,
+      -74,
+      -58,
+      -41,
+      74,
+      -20,
+      -91,
+      -42,
+      98,
+      -70,
+      -45,
+      58,
+      114,
+      -124,
+      -18,
+      -7,
+      5,
+      15,
+      -93,
+      24,
+      -10,
+      -54,
+      -4,
+      15,
+      -53,
+      -110,
+      -8,
+      -101,
+      20
+    ],
+    "TimeStamp": " 2021-11-03.17:28:17.2",
+    "SubmittingProcessID": 2,
+    "VerificationProcessID": 2,
+    "PreviousHash": "08210063F425A36E8F27B483950CF47CEBEC10E1505CDC25FF264E4509B1D449",
+    "Fname": "Joe",
+    "Lname": "DiMaggio",
+    "SSNum": "111-22-3333",
+    "DOB": "1914.11.25",
+    "RandomSeed": "5LQMP8O1",
+    "WinningHash": "027913E026F299EEDA4368FABB3E90C9BEC1A0A22C35E288E0FAB84FA5B44312",
+    "Diag": "SoreKnees",
+    "Treat": "RestFromSports",
+    "Rx": "Aspirin",
+    "blockInteger": 12
+  }
+]
+</pre>
